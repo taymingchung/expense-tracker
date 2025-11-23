@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { API_URL } from '../config'
-import { Upload, Search, Calendar, PiggyBank, Plus } from 'lucide-react'
+import { Upload, Search, Calendar, PiggyBank, Plus, X } from 'lucide-react'
 
 export default function Dashboard() {
   const [expenses, setExpenses] = useState([])
@@ -14,18 +14,26 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false)
   const [showCreateWallet, setShowCreateWallet] = useState(false)
   const [newWalletName, setNewWalletName] = useState('')
+  const [showAddExpense, setShowAddExpense] = useState(false)
+  const [newExpense, setNewExpense] = useState({
+    item: '',
+    price: '',
+    store: '',
+    date: new Date().toISOString().split('T')[0],
+    icon: '🛒'
+  })
+
+  const expenseIcons = ['🛒', '🍔', '🚗', '🏥', '📚', '🎬', '✈️', '🏠', '⚡', '💻', '👕', '🎮', '🌮', '☕', '🎫']
 
   const loadWallets = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // Get owned wallets
     const { data: owned } = await supabase
       .from('wallets')
       .select('id, name')
       .eq('owner_id', user.id)
 
-    // Get shared wallets (including if you are member of your own wallet)
     const { data: shared } = await supabase
       .from('wallet_members')
       .select('wallets!inner(id, name)')
@@ -33,7 +41,6 @@ export default function Dashboard() {
 
     const sharedWallets = shared?.map(m => ({ id: m.wallets.id, name: m.wallets.name })) || []
 
-    // Merge and remove duplicates
     const walletMap = new Map()
     ;[...(owned || []), ...sharedWallets].forEach(w => {
       if (!walletMap.has(w.id)) {
@@ -55,7 +62,12 @@ export default function Dashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     const { data } = await supabase.from('wallets').insert({ name: newWalletName, owner_id: user.id }).select().single()
     if (data) {
-      await supabase.from('wallet_members').insert({ wallet_id: data.id, user_id: user.id, role: 'owner' })
+      // Add user as owner member
+      await supabase.from('wallet_members').insert({ 
+        wallet_id: data.id, 
+        user_id: user.id, 
+        role: 'owner' 
+      })
       setNewWalletName('')
       setShowCreateWallet(false)
       loadWallets()
@@ -75,6 +87,50 @@ export default function Dashboard() {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     const data = await res.json()
     setExpenses(data || [])
+  }
+
+  const handleAddExpense = async () => {
+    if (!newExpense.item.trim() || !newExpense.price || !currentWallet) {
+      alert('Please fill in item name and price')
+      return
+    }
+
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      const res = await fetch(`${API_URL}/expenses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          wallet_id: currentWallet.id,
+          item: newExpense.item,
+          price: parseFloat(newExpense.price),
+          store: newExpense.store || 'Unknown Store',
+          date: newExpense.date,
+          icon: newExpense.icon
+        })
+      })
+
+      if (res.ok) {
+        alert('Expense added successfully!')
+        setNewExpense({
+          item: '',
+          price: '',
+          store: '',
+          date: new Date().toISOString().split('T')[0],
+          icon: '🛒'
+        })
+        setShowAddExpense(false)
+        fetchExpenses()
+      } else {
+        alert('Failed to add expense')
+      }
+    } catch (error) {
+      console.error('Error adding expense:', error)
+      alert('Error adding expense')
+    }
   }
 
   const handleUpload = async () => {
@@ -116,7 +172,6 @@ export default function Dashboard() {
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 0' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px' }}>
 
-        {/* 1. NO WALLET AT ALL — show welcome */}
         {wallets.length === 0 && (
           <div style={{ textAlign: 'center', padding: '80px 20px' }}>
             <div style={{
@@ -161,10 +216,9 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* 2. WALLET SELECTED — show full dashboard */}
         {currentWallet && (
           <>
-            {/* Upload Section */}
+            {/* Upload & Add Expense Buttons */}
             <div style={{
               background: 'white',
               borderRadius: '20px',
@@ -202,6 +256,24 @@ export default function Dashboard() {
                 >
                   <Upload size={22} />
                   {uploading ? 'Uploading...' : 'Upload CSV'}
+                </button>
+                <button
+                  onClick={() => setShowAddExpense(true)}
+                  style={{
+                    background: '#8b5cf6',
+                    color: 'white',
+                    padding: '16px 32px',
+                    borderRadius: '14px',
+                    fontWeight: '600',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}
+                >
+                  <Plus size={22} />
+                  Add Expense
                 </button>
               </div>
             </div>
@@ -317,6 +389,9 @@ export default function Dashboard() {
                     border: '1px solid #e2e8f0',
                     transition: '0.2s'
                   }}>
+                    <p style={{ fontSize: '48px', marginBottom: '12px' }}>
+                      {e.icon || '🛒'}
+                    </p>
                     <p style={{ fontSize: '22px', fontWeight: '700', marginBottom: '8px', color: '#1e293b' }}>
                       {e.item}
                     </p>
@@ -342,17 +417,16 @@ export default function Dashboard() {
                   No expenses in {currentWallet.name} yet
                 </p>
                 <p style={{ color: '#94a3b8', marginTop: '12px' }}>
-                  Upload your first CSV to get started!
+                  Upload your first CSV or add an expense manually!
                 </p>
               </div>
             )}
           </>
         )}
 
-        {/* Wallets exist but none selected */}
         {wallets.length > 0 && !currentWallet && (
           <div style={{ textAlign: 'center', padding: '80px', background: 'white', borderRadius: '24px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb' }}>
-            <WalletCards size={80} color="#94a3b8" style={{ marginBottom: '24px' }} />
+            <PiggyBank size={80} color="#94a3b8" style={{ marginBottom: '24px' }} />
             <p style={{ fontSize: '24px', color: '#64748b' }}>
               Select a wallet from the dropdown to view expenses
             </p>
@@ -379,6 +453,91 @@ export default function Dashboard() {
                 Create Wallet
               </button>
               <button onClick={() => setShowCreateWallet(false)} style={{ flex: 1, padding: '24px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '20px', fontSize: '20px', fontWeight: '700' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Expense Modal */}
+      {showAddExpense && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={() => setShowAddExpense(false)}>
+          <div style={{ background: 'white', borderRadius: '32px', padding: '60px', width: '90%', maxWidth: '580px', boxShadow: '0 40px 80px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+              <h2 style={{ fontSize: '36px', fontWeight: '900', color: '#1e293b' }}>
+                Add Expense
+              </h2>
+              <button onClick={() => setShowAddExpense(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>
+                <X size={32} color="#64748b" />
+              </button>
+            </div>
+
+            {/* Icon Selector */}
+            <div style={{ marginBottom: '32px' }}>
+              <label style={{ display: 'block', fontSize: '16px', fontWeight: '600', color: '#1e293b', marginBottom: '12px' }}>
+                Choose Icon
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(50px, 1fr))', gap: '12px' }}>
+                {expenseIcons.map(icon => (
+                  <button
+                    key={icon}
+                    onClick={() => setNewExpense({ ...newExpense, icon })}
+                    style={{
+                      fontSize: '32px',
+                      borderRadius: '14px',
+                      border: newExpense.icon === icon ? '3px solid #6366f1' : '2px solid #e2e8f0',
+                      background: newExpense.icon === icon ? '#eef2ff' : '#f8fafc',
+                      cursor: 'pointer',
+                      transition: '0.2s'
+                    }}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Description */}
+            <input
+              value={newExpense.item}
+              onChange={e => setNewExpense({ ...newExpense, item: e.target.value })}
+              placeholder="Description (e.g. Grocery, Lunch, Gas)"
+              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+            />
+
+            {/* Price */}
+            <input
+              type="number"
+              value={newExpense.price}
+              onChange={e => setNewExpense({ ...newExpense, price: e.target.value })}
+              placeholder="Price (RM)"
+              step="0.01"
+              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+            />
+
+            {/* Place */}
+            <input
+              value={newExpense.store}
+              onChange={e => setNewExpense({ ...newExpense, store: e.target.value })}
+              placeholder="Place / Store (optional)"
+              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+            />
+
+            {/* Date */}
+            <input
+              type="date"
+              value={newExpense.date}
+              onChange={e => setNewExpense({ ...newExpense, date: e.target.value })}
+              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '32px' }}
+            />
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', gap: '24px' }}>
+              <button onClick={handleAddExpense} style={{ flex: 1, padding: '20px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '16px', fontSize: '18px', fontWeight: '700', cursor: 'pointer', boxShadow: '0 10px 30px rgba(139,92,246,0.3)' }}>
+                Add Expense
+              </button>
+              <button onClick={() => setShowAddExpense(false)} style={{ flex: 1, padding: '20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '16px', fontSize: '18px', fontWeight: '600', cursor: 'pointer' }}>
                 Cancel
               </button>
             </div>
