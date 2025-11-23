@@ -1,20 +1,34 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { API_URL } from '../config'
-import { Upload, Search, Calendar, PiggyBank, Plus, X } from 'lucide-react'
+import { Search, Calendar, PiggyBank, Plus, X, Edit2, Trash2, FileUp, TrendingUp, WalletCards } from 'lucide-react'
+
+// Premium Sapphire Blue Palette
+const SAPPHIRE_BLUE = "#2563EB";
+const SAPPHIRE_LIGHT = "#DBEAFE";
+const SAPPHIRE_DARK = "#1E40AF";
+const SKY_BLUE = "#3B82F6";
+const EMERALD_GREEN = "#10B981";
+const RED_DANGER = "#EF4444";
+const WHITE = "#FFFFFF";
+const LIGHT_GRAY = "#F3F4F6";
+const DARK_NAVY = "#1E3A8A";
+const TEXT_DARK = "#1F2937";
+const TEXT_MUTED = "#6B7280";
+const BORDER_LIGHT = "#E5E7EB";
 
 export default function Dashboard() {
   const [expenses, setExpenses] = useState([])
   const [wallets, setWallets] = useState([])
   const [currentWallet, setCurrentWallet] = useState(null)
   const [search, setSearch] = useState('')
-  const [month, setMonth] = useState('')
-  const [year, setYear] = useState('')
+  const [selectedDate, setSelectedDate] = useState('')
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const [showCreateWallet, setShowCreateWallet] = useState(false)
-  const [newWalletName, setNewWalletName] = useState('')
   const [showAddExpense, setShowAddExpense] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [editingExpense, setEditingExpense] = useState(null)
+  const fileInputRef = useRef(null)
   const [newExpense, setNewExpense] = useState({
     item: '',
     price: '',
@@ -40,7 +54,6 @@ export default function Dashboard() {
       .eq('user_id', user.id)
 
     const sharedWallets = shared?.map(m => ({ id: m.wallets.id, name: m.wallets.name })) || []
-
     const walletMap = new Map()
     ;[...(owned || []), ...sharedWallets].forEach(w => {
       if (!walletMap.has(w.id)) {
@@ -48,30 +61,11 @@ export default function Dashboard() {
       }
     })
     const allWallets = Array.from(walletMap.values())
-
     setWallets(allWallets)
 
     const savedId = localStorage.getItem('currentWalletId')
     const selected = allWallets.find(w => w.id === savedId) || allWallets[0] || null
     setCurrentWallet(selected)
-    if (selected) localStorage.setItem('currentWalletId', selected.id)
-  }
-
-  const createWallet = async () => {
-    if (!newWalletName.trim()) return
-    const { data: { user } } = await supabase.auth.getUser()
-    const { data } = await supabase.from('wallets').insert({ name: newWalletName, owner_id: user.id }).select().single()
-    if (data) {
-      // Add user as owner member
-      await supabase.from('wallet_members').insert({ 
-        wallet_id: data.id, 
-        user_id: user.id, 
-        role: 'owner' 
-      })
-      setNewWalletName('')
-      setShowCreateWallet(false)
-      loadWallets()
-    }
   }
 
   const fetchExpenses = async () => {
@@ -82,12 +76,37 @@ export default function Dashboard() {
     const token = (await supabase.auth.getSession()).data.session?.access_token
     let url = `${API_URL}/expenses?wallet_id=${currentWallet.id}`
     if (search) url += `&search=${search}`
-    if (month && year) url += `&month=${month}&year=${year}`
+    if (selectedDate) url += `&date=${selectedDate}`
 
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    const data = await res.json()
-    setExpenses(data || [])
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      const data = await res.json()
+      setExpenses(data || [])
+    } catch (err) {
+      console.error("Fetch expenses error:", err)
+    }
   }
+
+  // Critical Fix: Listen to wallet changes from Navbar
+  useEffect(() => {
+    const handleWalletChange = () => {
+      loadWallets()
+    }
+    window.addEventListener('walletChanged', handleWalletChange)
+    window.addEventListener('storage', handleWalletChange)
+    return () => {
+      window.removeEventListener('walletChanged', handleWalletChange)
+      window.removeEventListener('storage', handleWalletChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadWallets()
+  }, [])
+
+  useEffect(() => {
+    fetchExpenses()
+  }, [currentWallet, search, selectedDate])
 
   const handleAddExpense = async () => {
     if (!newExpense.item.trim() || !newExpense.price || !currentWallet) {
@@ -97,8 +116,13 @@ export default function Dashboard() {
 
     try {
       const token = (await supabase.auth.getSession()).data.session?.access_token
-      const res = await fetch(`${API_URL}/expenses`, {
-        method: 'POST',
+      const url = editingExpense 
+        ? `${API_URL}/expenses/${editingExpense.id}` 
+        : `${API_URL}/expenses`
+      const method = editingExpense ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
@@ -114,7 +138,7 @@ export default function Dashboard() {
       })
 
       if (res.ok) {
-        alert('Expense added successfully!')
+        alert(editingExpense ? 'Expense updated!' : 'Expense added!')
         setNewExpense({
           item: '',
           price: '',
@@ -122,15 +146,43 @@ export default function Dashboard() {
           date: new Date().toISOString().split('T')[0],
           icon: '🛒'
         })
+        setEditingExpense(null)
         setShowAddExpense(false)
         fetchExpenses()
-      } else {
-        alert('Failed to add expense')
       }
     } catch (error) {
-      console.error('Error adding expense:', error)
-      alert('Error adding expense')
+      console.error('Error saving expense:', error)
     }
+  }
+
+  const handleDeleteExpense = async (expenseId) => {
+    if (!confirm('Delete this expense?')) return
+
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      const res = await fetch(`${API_URL}/expenses/${expenseId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+
+      if (res.ok) {
+        fetchExpenses()
+      }
+    } catch (error) {
+      console.error('Error deleting expense:', error)
+    }
+  }
+
+  const handleEditExpense = (expense) => {
+    setEditingExpense(expense)
+    setNewExpense({
+      item: expense.item,
+      price: expense.price.toString(),
+      store: expense.store || '',
+      date: expense.date,
+      icon: expense.icon || '🛒'
+    })
+    setShowAddExpense(true)
   }
 
   const handleUpload = async () => {
@@ -147,19 +199,13 @@ export default function Dashboard() {
       body: formData
     })
     const json = await res.json()
-    alert(json.success ? `Uploaded ${json.inserted} records to ${currentWallet.name}!` : json.error)
+    alert(json.success ? `Uploaded ${json.inserted} records!` : json.error)
     setFile(null)
+    setShowUploadModal(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
     fetchExpenses()
     setUploading(false)
   }
-
-  useEffect(() => {
-    loadWallets()
-  }, [])
-
-  useEffect(() => {
-    fetchExpenses()
-  }, [currentWallet, search, month, year])
 
   const total = expenses.reduce((sum, e) => sum + e.price, 0).toFixed(2)
   const grouped = expenses.reduce((acc, e) => {
@@ -169,239 +215,294 @@ export default function Dashboard() {
   }, {})
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 0' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px' }}>
+    <div style={{ minHeight: '100vh', background: '#FAFBFC', padding: '24px 0', paddingBottom: '48px' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 16px' }}>
 
         {wallets.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
             <div style={{
-              width: '160px',
-              height: '160px',
-              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-              borderRadius: '50%',
-              margin: '0 auto 40px',
+              width: '100px',
+              height: '100px',
+              background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
+              borderRadius: '20px',
+              margin: '0 auto 24px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 20px 40px rgba(99,102,241,0.3)'
+              boxShadow: `0 20px 50px rgba(37, 99, 235, 0.2)`
             }}>
-              <PiggyBank size={80} color="white" />
+              <PiggyBank size={50} color="white" />
             </div>
-            <h2 style={{ fontSize: '36px', fontWeight: '800', color: '#1e293b', marginBottom: '16px' }}>
-              Welcome to Expense Tracker
+            <h2 style={{ fontSize: '32px', fontWeight: '700', color: TEXT_DARK, marginBottom: '12px' }}>
+              Welcome to ExpenseTracker
             </h2>
-            <p style={{ fontSize: '18px', color: '#64748b', maxWidth: '600px', margin: '0 auto 40px' }}>
-              Create your first wallet to start tracking expenses — Personal, Couple Fund, Travel, anything you want.
+            <p style={{ fontSize: '16px', color: TEXT_MUTED, maxWidth: '500px', margin: '0 auto 32px' }}>
+              Start tracking your expenses by creating your first wallet
             </p>
             <button
-              onClick={() => setShowCreateWallet(true)}
+              onClick={() => window.location.href = '/'}
               style={{
-                background: '#6366f1',
+                background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
                 color: 'white',
-                padding: '18px 40px',
-                borderRadius: '16px',
-                fontSize: '18px',
-                fontWeight: '700',
+                padding: '12px 28px',
+                borderRadius: '10px',
+                fontSize: '15px',
+                fontWeight: '600',
                 border: 'none',
-                boxShadow: '0 10px 30px rgba(99,102,241,0.4)',
+                boxShadow: `0 10px 25px rgba(37, 99, 235, 0.3)`,
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '12px'
+                gap: '8px'
               }}
             >
-              <Plus size={28} />
-              Create Your First Wallet
+              <Plus size={20} />
+              Create First Wallet
             </button>
           </div>
         )}
 
         {currentWallet && (
           <>
-            {/* Upload & Add Expense Buttons */}
+            {/* Action Buttons */}
             <div style={{
-              background: 'white',
-              borderRadius: '20px',
-              padding: '32px',
-              marginBottom: '40px',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
-              border: '1px solid #e2e8f0'
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: '12px',
+              marginBottom: '28px'
             }}>
-              <h2 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Upload size={28} />
-                Upload CSV to <span style={{ color: '#6366f1' }}>{currentWallet.name}</span>
-              </h2>
-              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={e => setFile(e.target.files[0])}
-                  style={{ flex: 1, minWidth: '280px', padding: '16px', borderRadius: '14px', border: '2px solid #e2e8f0', fontSize: '16px' }}
-                />
-                <button
-                  onClick={handleUpload}
-                  disabled={uploading || !file}
-                  style={{
-                    background: uploading || !file ? '#94a3b8' : '#6366f1',
-                    color: 'white',
-                    padding: '16px 32px',
-                    borderRadius: '14px',
-                    fontWeight: '600',
-                    border: 'none',
-                    cursor: uploading || !file ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}
-                >
-                  <Upload size={22} />
-                  {uploading ? 'Uploading...' : 'Upload CSV'}
-                </button>
-                <button
-                  onClick={() => setShowAddExpense(true)}
-                  style={{
-                    background: '#8b5cf6',
-                    color: 'white',
-                    padding: '16px 32px',
-                    borderRadius: '14px',
-                    fontWeight: '600',
-                    border: 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}
-                >
-                  <Plus size={22} />
-                  Add Expense
-                </button>
-              </div>
+              <button
+                onClick={() => setShowUploadModal(true)}
+                style={{
+                  background: SAPPHIRE_BLUE,
+                  color: 'white',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  fontWeight: '600',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  fontFamily: 'inherit'
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = DARK_NAVY)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = SAPPHIRE_BLUE)}
+              >
+                <FileUp size={18} />
+                Upload CSV
+              </button>
+              <button
+                onClick={() => {
+                  setEditingExpense(null)
+                  setNewExpense({
+                    item: '',
+                    price: '',
+                    store: '',
+                    date: new Date().toISOString().split('T')[0],
+                    icon: '🛒'
+                  })
+                  setShowAddExpense(true)
+                }}
+                style={{
+                  background: EMERALD_GREEN,
+                  color: 'white',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  fontWeight: '600',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  fontFamily: 'inherit'
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                <Plus size={18} />
+                Add Expense
+              </button>
             </div>
 
             {/* Filters */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '40px' }}>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', 
+              gap: '12px', 
+              marginBottom: '28px' 
+            }}>
               <div style={{ position: 'relative' }}>
-                <Search size={20} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: TEXT_MUTED, pointerEvents: 'none' }} />
                 <input
-                  placeholder="Search item..."
+                  placeholder="Search items..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  style={{ width: '100%', padding: '16px 16px 16px 50px', borderRadius: '14px', border: '2px solid #e2e8f0', fontSize: '16px' }}
+                  style={{ 
+                    width: '100%', 
+                    padding: '11px 12px 11px 40px', 
+                    borderRadius: '8px', 
+                    border: `1.5px solid ${BORDER_LIGHT}`, 
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                    fontFamily: 'inherit'
+                  }}
                 />
               </div>
               <div style={{ position: 'relative' }}>
-                <Calendar size={20} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <Calendar size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: TEXT_MUTED, pointerEvents: 'none' }} />
                 <input
-                  type="number"
-                  placeholder="Month (1-12)"
-                  value={month}
-                  onChange={e => setMonth(e.target.value)}
-                  style={{ width: '100%', padding: '16px 16px 16px 50px', borderRadius: '14px', border: '2px solid #e2e8f0', fontSize: '16px' }}
-                />
-              </div>
-              <div style={{ position: 'relative' }}>
-                <Calendar size={20} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                <input
-                  type="number"
-                  placeholder="Year"
-                  value={year}
-                  onChange={e => setYear(e.target.value)}
-                  style={{ width: '100%', padding: '16px 16px 16px 50px', borderRadius: '14px', border: '2px solid #e2e8f0', fontSize: '16px' }}
+                  type="date"
+                  value={selectedDate}
+                  onChange={e => setSelectedDate(e.target.value)}
+                  style={{ 
+                    width: '100%', 
+                    padding: '11px 12px 11px 40px', 
+                    borderRadius: '8px', 
+                    border: `1.5px solid ${BORDER_LIGHT}`, 
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                    fontFamily: 'inherit'
+                  }}
                 />
               </div>
             </div>
 
-            {/* Total Spent */}
-            {month && year && (
+            {/* Total Card */}
+            {selectedDate && (
               <div style={{
-                textAlign: 'center',
-                background: 'white',
-                padding: '48px',
-                borderRadius: '24px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
-                marginBottom: '40px',
-                border: '1px solid #e2e8f0'
+                background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
+                color: 'white',
+                padding: '32px 24px',
+                borderRadius: '16px',
+                marginBottom: '28px',
+                boxShadow: `0 10px 30px rgba(37, 99, 235, 0.15)`,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
               }}>
-                <p style={{ fontSize: '20px', color: '#64748b', marginBottom: '12px' }}>
-                  Total Spent in {month}/{year}
-                </p>
-                <p style={{ fontSize: '72px', fontWeight: '900', color: '#6366f1' }}>
-                  RM {total}
-                </p>
+                <div>
+                  <p style={{ fontSize: '13px', opacity: 0.9, marginBottom: '6px' }}>
+                    Total Spent
+                  </p>
+                  <p style={{ fontSize: '12px', opacity: 0.8, marginBottom: '8px' }}>
+                    {selectedDate}
+                  </p>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ fontSize: '42px', fontWeight: '700', letterSpacing: '-0.5px' }}>
+                    RM {total}
+                  </p>
+                </div>
               </div>
             )}
 
-            {/* Price Comparison Mode */}
+            {/* Price Comparison */}
             {search && Object.keys(grouped).length > 0 && (
-              <div style={{ display: 'grid', gap: '24px' }}>
+              <div style={{ display: 'grid', gap: '16px', marginBottom: '28px' }}>
                 {Object.entries(grouped)
                   .filter(([item]) => item.toLowerCase().includes(search.toLowerCase()))
                   .map(([item, list]) => (
-                    <div key={item} style={{ background: 'white', borderRadius: '20px', padding: '32px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
-                      <h3 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '24px', color: '#1e293b' }}>
-                        {item} ({list.length} purchases)
+                    <div key={item} style={{ background: WHITE, borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
+                      <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px', color: TEXT_DARK }}>
+                        {item} <span style={{ color: TEXT_MUTED, fontWeight: '500' }}>({list.length})</span>
                       </h3>
-                      <div style={{ display: 'grid', gap: '16px' }}>
+                      <div style={{ display: 'grid', gap: '10px' }}>
                         {list.sort((a, b) => a.price - b.price).map((e, i) => (
                           <div key={i} style={{
-                            padding: '20px',
-                            borderRadius: '16px',
-                            background: i === 0 ? 'linear-gradient(to right, #ecfdf5, #d1fae5)' : '#f8fafc',
-                            border: i === 0 ? '2px solid #10b981' : '1px solid #e2e8f0',
+                            padding: '14px',
+                            borderRadius: '8px',
+                            background: i === 0 ? '#ECFDF5' : LIGHT_GRAY,
+                            border: i === 0 ? `1.5px solid ${EMERALD_GREEN}` : `1px solid ${BORDER_LIGHT}`,
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'center'
                           }}>
                             <div>
-                              <p style={{ fontSize: '20px', fontWeight: i === 0 ? '700' : '600', color: i === 0 ? '#16a34a' : '#334155' }}>
+                              <p style={{ fontSize: '14px', fontWeight: i === 0 ? '600' : '500', color: i === 0 ? EMERALD_GREEN : TEXT_DARK }}>
                                 {e.store || 'Unknown Store'}
                               </p>
-                              <p style={{ color: '#94a3b8', fontSize: '14px' }}>{e.date}</p>
+                              <p style={{ color: TEXT_MUTED, fontSize: '12px' }}>{e.date}</p>
                             </div>
-                            <p style={{ fontSize: '32px', fontWeight: '800', color: i === 0 ? '#16a34a' : '#334155' }}>
+                            <p style={{ fontSize: '18px', fontWeight: '700', color: i === 0 ? EMERALD_GREEN : TEXT_DARK }}>
                               RM {e.price.toFixed(2)}
                             </p>
                           </div>
                         ))}
                       </div>
-                      {list.length > 1 && (
-                        <div style={{ marginTop: '24px', padding: '20px', background: '#ecfdf5', borderRadius: '16px', textAlign: 'center' }}>
-                          <p style={{ fontSize: '20px', fontWeight: '700', color: '#16a34a' }}>
-                            ✨ Cheapest at {list[0].store || 'this store'} → RM {list[0].price.toFixed(2)}
-                          </p>
-                        </div>
-                      )}
                     </div>
                   ))}
               </div>
             )}
 
-            {/* Recent Expenses Grid */}
+            {/* Expenses Grid */}
             {!search && expenses.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
                 {expenses.slice(0, 24).map(e => (
                   <div key={e.id} style={{
-                    background: 'white',
-                    borderRadius: '20px',
-                    padding: '28px',
-                    textAlign: 'center',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
-                    border: '1px solid #e2e8f0',
-                    transition: '0.2s'
+                    background: WHITE,
+                    borderRadius: '12px',
+                    padding: '20px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                    border: `1px solid ${BORDER_LIGHT}`,
+                    position: 'relative',
+                    transition: 'all 0.2s'
                   }}>
-                    <p style={{ fontSize: '48px', marginBottom: '12px' }}>
+                    {/* Action Buttons */}
+                    <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={() => handleEditExpense(e)}
+                        style={{
+                          background: SAPPHIRE_BLUE,
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          fontFamily: 'inherit'
+                        }}
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteExpense(e.id)}
+                        style={{
+                          background: RED_DANGER,
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          fontFamily: 'inherit'
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+
+                    <p style={{ fontSize: '40px', marginBottom: '12px', marginTop: '12px' }}>
                       {e.icon || '🛒'}
                     </p>
-                    <p style={{ fontSize: '22px', fontWeight: '700', marginBottom: '8px', color: '#1e293b' }}>
+                    <p style={{ fontSize: '16px', fontWeight: '700', marginBottom: '6px', color: TEXT_DARK }}>
                       {e.item}
                     </p>
-                    <p style={{ color: '#64748b', marginBottom: '12px' }}>
-                      {e.store || '—'}
+                    <p style={{ color: TEXT_MUTED, marginBottom: '12px', fontSize: '13px' }}>
+                      {e.store || 'Unknown'}
                     </p>
-                    <p style={{ fontSize: '36px', fontWeight: '900', color: '#6366f1' }}>
+                    <p style={{ fontSize: '24px', fontWeight: '700', color: SAPPHIRE_BLUE, marginBottom: '8px' }}>
                       RM {e.price.toFixed(2)}
                     </p>
-                    <p style={{ fontSize: '14px', color: '#94a3b8', marginTop: '12px' }}>
+                    <p style={{ fontSize: '12px', color: TEXT_MUTED }}>
                       {e.date}
                     </p>
                   </div>
@@ -409,15 +510,15 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* No expenses yet */}
+            {/* Empty State */}
             {currentWallet && expenses.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '80px', background: 'white', borderRadius: '24px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb' }}>
-                <PiggyBank size={80} color="#94a3b8" style={{ marginBottom: '24px' }} />
-                <p style={{ fontSize: '24px', color: '#64748b' }}>
-                  No expenses in {currentWallet.name} yet
+              <div style={{ textAlign: 'center', padding: '60px 20px', background: WHITE, borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
+                <TrendingUp size={48} color={TEXT_MUTED} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+                <p style={{ fontSize: '18px', fontWeight: '600', color: TEXT_DARK, marginBottom: '8px' }}>
+                  No expenses yet
                 </p>
-                <p style={{ color: '#94a3b8', marginTop: '12px' }}>
-                  Upload your first CSV or add an expense manually!
+                <p style={{ color: TEXT_MUTED, fontSize: '14px' }}>
+                  Start by uploading a CSV or adding your first expense
                 </p>
               </div>
             )}
@@ -425,34 +526,111 @@ export default function Dashboard() {
         )}
 
         {wallets.length > 0 && !currentWallet && (
-          <div style={{ textAlign: 'center', padding: '80px', background: 'white', borderRadius: '24px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', border: '1px solid #e5e7eb' }}>
-            <PiggyBank size={80} color="#94a3b8" style={{ marginBottom: '24px' }} />
-            <p style={{ fontSize: '24px', color: '#64748b' }}>
-              Select a wallet from the dropdown to view expenses
+          <div style={{ textAlign: 'center', padding: '60px 20px', background: WHITE, borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
+            <WalletCards size={48} color={TEXT_MUTED} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+            <p style={{ fontSize: '18px', fontWeight: '600', color: TEXT_DARK }}>
+              Select a wallet from the top menu
             </p>
           </div>
         )}
       </div>
 
-      {/* Create Wallet Modal */}
-      {showCreateWallet && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={() => setShowCreateWallet(false)}>
-          <div style={{ background: 'white', borderRadius: '32px', padding: '60px', width: '90%', maxWidth: '520px', boxShadow: '0 40px 80px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: '36px', fontWeight: '900', textAlign: 'center', marginBottom: '40px', color: '#1e293b' }}>
-              Create New Wallet
-            </h2>
-            <input
-              value={newWalletName}
-              onChange={e => setNewWalletName(e.target.value)}
-              placeholder="e.g. Couple Fund, Personal, Travel 2026"
-              style={{ width: '100%', padding: '24px', borderRadius: '20px', border: '3px solid #e2e8f0', fontSize: '20px', marginBottom: '40px' }}
-              onKeyPress={e => e.key === 'Enter' && createWallet()}
-            />
-            <div style={{ display: 'flex', gap: '24px' }}>
-              <button onClick={createWallet} style={{ flex: 1, padding: '24px', background: '#6366f1', color: 'white', border: 'none', borderRadius: '20px', fontSize: '20px', fontWeight: '800', boxShadow: '0 15px 35px rgba(99,102,241,0.4)' }}>
-                Create Wallet
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.4)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 999,
+          padding: '16px'
+        }} onClick={() => setShowUploadModal(false)}>
+          <div style={{
+            background: WHITE,
+            borderRadius: '16px',
+            padding: '32px',
+            width: '100%',
+            maxWidth: '500px',
+            boxShadow: '0 25px 50px rgba(0,0,0,0.15)'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT_DARK, margin: 0 }}>
+                Upload CSV File
+              </h2>
+              <button onClick={() => setShowUploadModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '24px', color: TEXT_MUTED, padding: 0 }}>
+                ×
               </button>
-              <button onClick={() => setShowCreateWallet(false)} style={{ flex: 1, padding: '24px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '20px', fontSize: '20px', fontWeight: '700' }}>
+            </div>
+
+            <div
+              style={{
+                border: `2px dashed ${SAPPHIRE_BLUE}`,
+                borderRadius: '12px',
+                padding: '40px 20px',
+                textAlign: 'center',
+                background: SAPPHIRE_LIGHT,
+                cursor: 'pointer',
+                marginBottom: '24px',
+                transition: 'all 0.2s'
+              }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FileUp size={40} color={SAPPHIRE_BLUE} style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontSize: '16px', fontWeight: '600', color: TEXT_DARK, marginBottom: '4px' }}>
+                Choose a file
+              </p>
+              <p style={{ color: TEXT_MUTED, fontSize: '13px' }}>
+                or drag and drop
+              </p>
+              {file && (
+                <p style={{ marginTop: '12px', color: EMERALD_GREEN, fontWeight: '600', fontSize: '13px' }}>
+                  ✓ {file.name}
+                </p>
+              )}
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              onChange={e => setFile(e.target.files[0])}
+              style={{ display: 'none' }}
+            />
+
+            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+              <button
+                onClick={handleUpload}
+                disabled={uploading || !file}
+                style={{
+                  padding: '12px',
+                  background: uploading || !file ? TEXT_MUTED : SAPPHIRE_BLUE,
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '15px',
+                  fontWeight: '700',
+                  cursor: uploading || !file ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit'
+                }}
+              >
+                {uploading ? 'Uploading...' : 'Upload'}
+              </button>
+              <button
+                onClick={() => setShowUploadModal(false)}
+                style={{
+                  padding: '12px',
+                  background: LIGHT_GRAY,
+                  color: TEXT_DARK,
+                  border: `1px solid ${BORDER_LIGHT}`,
+                  borderRadius: '8px',
+                  fontSize: '15px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit'
+                }}
+              >
                 Cancel
               </button>
             </div>
@@ -460,36 +638,55 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Add Expense Modal */}
+      {/* Add/Edit Expense Modal */}
       {showAddExpense && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={() => setShowAddExpense(false)}>
-          <div style={{ background: 'white', borderRadius: '32px', padding: '60px', width: '90%', maxWidth: '580px', boxShadow: '0 40px 80px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
-              <h2 style={{ fontSize: '36px', fontWeight: '900', color: '#1e293b' }}>
-                Add Expense
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.4)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 999
+        }} onClick={() => setShowAddExpense(false)}>
+          <div style={{
+            background: WHITE,
+            borderRadius: '16px',
+            padding: '28px',
+            width: '100%',
+            maxWidth: '580px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.15)'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT_DARK, margin: 0 }}>
+                {editingExpense ? 'Edit Expense' : 'Add Expense'}
               </h2>
-              <button onClick={() => setShowAddExpense(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>
-                <X size={32} color="#64748b" />
+              <button onClick={() => setShowAddExpense(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '28px', color: TEXT_MUTED, padding: 0 }}>
+                ×
               </button>
             </div>
 
             {/* Icon Selector */}
-            <div style={{ marginBottom: '32px' }}>
-              <label style={{ display: 'block', fontSize: '16px', fontWeight: '600', color: '#1e293b', marginBottom: '12px' }}>
-                Choose Icon
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: TEXT_MUTED, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Category
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(50px, 1fr))', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(45px, 1fr))', gap: '10px' }}>
                 {expenseIcons.map(icon => (
                   <button
                     key={icon}
                     onClick={() => setNewExpense({ ...newExpense, icon })}
                     style={{
-                      fontSize: '32px',
-                      borderRadius: '14px',
-                      border: newExpense.icon === icon ? '3px solid #6366f1' : '2px solid #e2e8f0',
-                      background: newExpense.icon === icon ? '#eef2ff' : '#f8fafc',
+                      fontSize: '28px',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      border: newExpense.icon === icon ? `2px solid ${SAPPHIRE_BLUE}` : `2px solid ${BORDER_LIGHT}`,
+                      background: newExpense.icon === icon ? SAPPHIRE_LIGHT : LIGHT_GRAY,
                       cursor: 'pointer',
-                      transition: '0.2s'
+                      transition: '0.2s',
+                      fontFamily: 'inherit'
                     }}
                   >
                     {icon}
@@ -498,52 +695,51 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Description */}
             <input
               value={newExpense.item}
               onChange={e => setNewExpense({ ...newExpense, item: e.target.value })}
-              placeholder="Description (e.g. Grocery, Lunch, Gas)"
-              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+              placeholder="Item description"
+              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
             />
 
-            {/* Price */}
             <input
               type="number"
               value={newExpense.price}
               onChange={e => setNewExpense({ ...newExpense, price: e.target.value })}
-              placeholder="Price (RM)"
+              placeholder="Amount (RM)"
               step="0.01"
-              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
             />
 
-            {/* Place */}
             <input
               value={newExpense.store}
               onChange={e => setNewExpense({ ...newExpense, store: e.target.value })}
-              placeholder="Place / Store (optional)"
-              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '20px' }}
+              placeholder="Store (optional)"
+              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
             />
 
-            {/* Date */}
             <input
               type="date"
               value={newExpense.date}
               onChange={e => setNewExpense({ ...newExpense, date: e.target.value })}
-              style={{ width: '100%', padding: '20px', borderRadius: '16px', border: '2px solid #e2e8f0', fontSize: '16px', marginBottom: '32px' }}
+              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '24px', boxSizing: 'border-box', fontFamily: 'inherit' }}
             />
 
-            {/* Buttons */}
-            <div style={{ display: 'flex', gap: '24px' }}>
-              <button onClick={handleAddExpense} style={{ flex: 1, padding: '20px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '16px', fontSize: '18px', fontWeight: '700', cursor: 'pointer', boxShadow: '0 10px 30px rgba(139,92,246,0.3)' }}>
-                Add Expense
+            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
+              <button onClick={handleAddExpense} style={{ padding: '12px', background: SAPPHIRE_BLUE, color: WHITE, border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                {editingExpense ? 'Update' : 'Add'}
               </button>
-              <button onClick={() => setShowAddExpense(false)} style={{ flex: 1, padding: '20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '16px', fontSize: '18px', fontWeight: '600', cursor: 'pointer' }}>
+              <button onClick={() => setShowAddExpense(false)} style={{ padding: '12px', background: LIGHT_GRAY, color: TEXT_DARK, border: `1px solid ${BORDER_LIGHT}`, borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                 Cancel
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <style>{`
+        * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      `}</style>
     </div>
   )
 }
