@@ -566,6 +566,55 @@ export default function Dashboard() {
                 ×
               </button>
             </div>
+            {/* DOWNLOAD SAMPLE CSV BUTTON - ADD THIS */}
+            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+              <p style={{ fontSize: '13px', color: TEXT_MUTED, marginBottom: '12px' }}>
+                Not sure how to format your file?
+              </p>
+              <button
+                onClick={() => {
+                  const csvContent = `date,item,price,store,category
+                        2025-04-01,Starbucks Coffee,12.50,Starbucks,beverages
+                        2025-04-02,Grab Ride to Office,18.00,Grab,transport
+                        2025-04-03,Chicken Rice Lunch,8.50,Hawker Centre,food
+                        2025-04-04,Netflix Subscription,49.00,,entertainment`;
+
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const link = document.createElement('a');
+                  const url = URL.createObjectURL(blob);
+                  link.setAttribute('href', url);
+                  link.setAttribute('download', 'expense-tracker-sample.csv');
+                  link.style.visibility = 'hidden';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                style={{
+                  background: 'transparent',
+                  color: SAPPHIRE_BLUE,
+                  border: `2px dashed ${SAPPHIRE_BLUE}`,
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s',
+                  fontFamily: 'inherit'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = SAPPHIRE_LIGHT;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <FileUp size={18} />
+                Download Sample CSV
+              </button>
+            </div>
 
             <div
               style={{
