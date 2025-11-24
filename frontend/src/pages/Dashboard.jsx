@@ -76,7 +76,10 @@ export default function Dashboard() {
     const token = (await supabase.auth.getSession()).data.session?.access_token
     let url = `${API_URL}/expenses?wallet_id=${currentWallet.id}`
     if (search) url += `&search=${search}`
-    if (selectedDate) url += `&date=${selectedDate}`
+    if (selectedDate) {
+      const [year, month] = selectedDate.split('-');
+      url += `&month=${month}&year=${year}`;
+    }
 
     try {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
@@ -680,7 +683,6 @@ export default function Dashboard() {
                     onClick={() => setNewExpense({ ...newExpense, icon })}
                     style={{
                       fontSize: '28px',
-                      padding: '10px',
                       borderRadius: '8px',
                       border: newExpense.icon === icon ? `2px solid ${SAPPHIRE_BLUE}` : `2px solid ${BORDER_LIGHT}`,
                       background: newExpense.icon === icon ? SAPPHIRE_LIGHT : LIGHT_GRAY,

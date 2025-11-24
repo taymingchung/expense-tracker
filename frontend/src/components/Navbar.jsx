@@ -599,13 +599,19 @@ export default function Navbar() {
                   padding: "16px",
                   background: LIGHT_GRAY,
                   color: TEXT_DARK,
-                  border: `2px solid ${BORDER_LIGHT}`,
                   borderRadius: "12px",
+                  border: `2px solid ${BORDER_LIGHT}`,
                   fontWeight: "700",
                   fontSize: "16px",
                   cursor: "pointer",
                   transition: "all 0.3s",
                   fontFamily: "inherit"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = BORDER_LIGHT;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = LIGHT_GRAY;
                 }}
               >
                 Cancel

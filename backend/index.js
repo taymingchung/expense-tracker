@@ -4,19 +4,33 @@ import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 import csv from 'csv-parser';
 import fs from 'fs';
+import 'dotenv/config';
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
+/* -------------------------------------------------
+   🔐  USE ANON KEY FOR NORMAL USER AUTH (VERY IMPORTANT)
+--------------------------------------------------- */
 const supabase = createClient(
-  'https://yhrogwhomqfofxdzhbjs.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlocm9nd2hvbXFmb2Z4ZHpoYmpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4NzAyMzUsImV4cCI6MjA3OTQ0NjIzNX0.Xr1USyNJoPD_TRreSeR_d-SA0D_uRndJPgBcFn2gnK8'
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY   // <--- REPLACE with your anon key
 );
+
+/* -------------------------------------------------
+   🔐  ADMIN CLIENT USING SERVICE ROLE KEY
+   - ONLY USED FOR admin.listUsers(), admin.deleteUser()
+--------------------------------------------------- */
+const adminClient = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY   // <--- use service key here
+);
+console.log("Service role key loaded?", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 const upload = multer({ dest: 'uploads/' });
 
-// Icon mapping
+/* ICON MAP */
 const iconMap = {
   '🛒': 'shopping',
   '🍔': 'food',
@@ -34,9 +48,11 @@ const iconMap = {
   '☕': 'beverages',
   '🎫': 'events'
 };
-
 const reverseIconMap = Object.fromEntries(Object.entries(iconMap).map(([k, v]) => [v, k]));
 
+/* -------------------------------------------------
+   🔐  FIXED USER AUTH FUNCTION
+--------------------------------------------------- */
 async function getUser(req) {
   const token = req.headers.authorization?.split('Bearer ')[1];
   if (!token) throw new Error('No token');
@@ -47,7 +63,9 @@ async function getUser(req) {
   return user;
 }
 
-// GET wallets for current user
+/* -------------------------------------------------
+   WALLET ENDPOINTS (unchanged)
+--------------------------------------------------- */
 app.get('/wallets', async (req, res) => {
   try {
     const user = await getUser(req);
@@ -64,7 +82,6 @@ app.get('/wallets', async (req, res) => {
 
     const sharedWallets = shared?.map(m => m.wallets) || [];
     const walletMap = new Map();
-    
     [...(owned || []), ...sharedWallets].forEach(w => {
       if (!walletMap.has(w.id)) {
         walletMap.set(w.id, w);
@@ -320,11 +337,25 @@ app.get('/expenses', async (req, res) => {
     const user = await getUser(req);
     const { wallet_id, month, year, search } = req.query;
 
-    let q = supabase.from('expenses').select('*').eq('user_id', user.id);
-
-    if (wallet_id) {
-      q = q.eq('wallet_id', wallet_id);
+    if (!wallet_id) {
+      return res.json([]);
     }
+
+    // Verify user has access to this wallet
+    const { data: member, error: memberError } = await supabase
+      .from('wallet_members')
+      .select('user_id')
+      .eq('wallet_id', wallet_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (memberError) throw memberError;
+
+    if (!member) {
+      return res.status(403).json({ error: 'No access to this wallet' });
+    }
+
+    let q = supabase.from('expenses').select('*').eq('wallet_id', wallet_id);
 
     if (month && year) {
       q = q.gte('date', `${year}-${month.padStart(2,'0')}-01`).lt('date', `${year}-${(parseInt(month)+1).toString().padStart(2,'0')}-01`);
@@ -345,36 +376,93 @@ app.get('/expenses', async (req, res) => {
   }
 });
 
+/* -------------------------------------------------
+   ADMIN: GET USERS (FIXED TO USE adminClient)
+--------------------------------------------------- */
 app.get('/admin/users', async (req, res) => {
   try {
     const user = await getUser(req);
-    const { data: p } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single();
-    if (!p?.is_admin) return res.status(403).json({ error: 'Forbidden' });
-    const { data: profiles } = await supabase.from('profiles').select('*');
-    const { data: authUsers } = await supabase.auth.admin.listUsers();
+
+    // Check if current user is admin (bypass RLS)
+    const { data: profile, error: profileError } = await adminClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile?.is_admin) {
+      return res.status(403).json({ error: 'Forbidden - not admin' });
+    }
+
+    // ← THIS IS THE FIX: use adminClient to get ALL profiles
+    const { data: profiles } = await adminClient
+      .from('profiles')
+      .select('*');
+
+    // Get emails from auth.users (still needs service_role)
+    const { data: authUsers } = await adminClient.auth.admin.listUsers();
+
     const list = profiles.map(p => {
       const au = authUsers.users.find(u => u.id === p.id);
-      return { id: p.id, email: au?.email || '', full_name: p.full_name || '', is_blocked: p.is_blocked };
+      return {
+        id: p.id,
+        email: au?.email || '—',
+        full_name: p.full_name || '—',
+        is_blocked: p.is_blocked || false,
+        created_at: p.created_at
+      };
     });
+
     res.json(list);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('Admin users error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
+/* -------------------------------------------------
+   ADMIN ACTIONS (delete, block/unblock) — FIXED
+--------------------------------------------------- */
 app.post('/admin/action', async (req, res) => {
   try {
-    const admin = await getUser(req);
-    const { data: ap } = await supabase.from('profiles').select('is_admin').eq('id', admin.id).single();
-    if (!ap?.is_admin) return res.status(403).json({ error: 'Forbidden' });
+    const user = await getUser(req);
+
+    // ← ONLY USE adminClient to check is_admin
+    const { data: profile, error: profileError } = await adminClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile?.is_admin) {
+      return res.status(403).json({ error: 'Forbidden - not admin' });
+    }
+
     const { user_id, action } = req.body;
+
     if (action === 'delete') {
-      await supabase.auth.admin.deleteUser(user_id);
+      await adminClient.auth.admin.deleteUser(user_id);
       await supabase.from('expenses').delete().eq('user_id', user_id);
       await supabase.from('profiles').delete().eq('id', user_id);
     } else {
-      await supabase.from('profiles').update({ is_blocked: action === 'block' }).eq('id', user_id);
+      // block or unblock
+      await supabase
+        .from('profiles')
+        .update({ is_blocked: action === 'block' })
+        .eq('id', user_id);
     }
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
-app.listen(5000, '0.0.0.0', () => console.log('Backend on 5000'));
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Admin action error:', e);
+    res.status(500).json({ error: e.message });
+  }
+})
+
+
+/* -------------------------------------------------
+   START SERVER
+--------------------------------------------------- */
+app.listen(5000, '0.0.0.0', () =>
+  console.log('Backend running on port 5000')
+);
