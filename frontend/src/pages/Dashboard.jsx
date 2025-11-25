@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { Search, Plus, Edit2, Trash2, TrendingUp, LayoutGrid, List } from 'lucide-react'
+import { Search, Plus, Edit2, Trash2, TrendingUp, LayoutGrid, List, Wallet } from 'lucide-react'
 
 const COLORS = {
   primary: "#2563EB",
   success: "#10B981",
-  successLight: "#ECFDF5",
+  successLight: "#D1FAE5",
   danger: "#EF4444",
-  dangerLight: "#FEF2F2",
+  dangerLight: "#FEE2E2",
   textDark: "#111827",
   textGray: "#6B7280",
   bg: "#F3F4F6",
@@ -15,22 +15,59 @@ const COLORS = {
   border: "#E5E7EB"
 };
 
-// Real emojis — this is what makes it beautiful!
+// --- ICONS ---
 const expenseIcons = [
   '🛍️', '🍔', '🚗', '🩺', '📚', '🎬', '✈️', '🏠', '⚡', '💻', '👕', '☕', '🎟️'
 ]
-
 const incomeIcons = [
   '💵', '💼', '📈', '🎁'
 ]
-
-// For category filter dropdown
 const ICON_LABELS = {
   '🛍️': 'Shopping', '🍔': 'Food', '🚗': 'Transport', '🩺': 'Health',
   '📚': 'Education', '🎬': 'Entertainment', '✈️': 'Travel', '🏠': 'Housing',
   '⚡': 'Utilities', '💻': 'Electronics', '👕': 'Clothing', 
   '☕': 'Coffee', '🎟️': 'Events',
-  '💵': 'Salary', '💼': 'Business', '📈': 'Investment', '🎁': 'Bonus'
+  '💵': 'Salary', '💼': 'Business', '📈': 'Invest', '🎁': 'Bonus'
+}
+
+const ICON_TO_TEXT = {
+  'Shopping Cart': 'Shopping',
+  'Hamburger': 'Food',
+  'Car': 'Transport',
+  'Stethoscope': 'Health',
+  'Book': 'Education',
+  'Clapper Board': 'Entertainment',
+  'Airplane': 'Travel',
+  'House': 'Housing',
+  'Lightning Bolt': 'Utilities',
+  'Laptop': 'Electronics',
+  'Shirt': 'Clothing',
+  'Hot Beverage': 'Coffee',
+  'Ticket': 'Events',
+  'Money Bag': 'Salary',
+  'Briefcase': 'Business',
+  'Chart Increasing': 'Invest',
+  'Gift': 'Bonus'
+}
+
+const TEXT_TO_ICON = {
+  'Shopping': '🛍️',
+  'Food': '🍔',
+  'Transport': '🚗',
+  'Health': '🩺',
+  'Education': '📚',
+  'Entertainment': '🎬',
+  'Travel': '✈️',
+  'Housing': '🏠',
+  'Utilities': '⚡',
+  'Electronics':  '💻',
+  'Clothing': '👕',
+  'Coffee': '☕',
+  'Events': '🎟️',
+  'Salary': '💵',
+  'Business': '💼',
+  'Invest': '📈',
+  'Bonus': '🎁'
 }
 
 export default function Dashboard() {
@@ -41,8 +78,9 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 7))
   const [viewType, setViewType] = useState('list')
   const [selectedCategory, setSelectedCategory] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  // Modal & Form
+  // Modal State
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [entryType, setEntryType] = useState('expense')
@@ -51,77 +89,125 @@ export default function Dashboard() {
     price: '',
     store: '',
     date: new Date().toISOString().split('T')[0],
-    icon: 'shopping'
+    icon: '🛍️'
   })
 
-  // Load wallets
+  // 1. Load Wallets
   const loadWallets = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data: owned } = await supabase.from('wallets').select('id, name').eq('owner_id', user.id)
     const { data: shared } = await supabase.from('wallet_members').select('wallets!inner(id, name)').eq('user_id', user.id)
     const allWallets = [...(owned || []), ...(shared?.map(m => m.wallets) || [])]
+    
+    // Deduplicate
     const uniqueWallets = Array.from(new Map(allWallets.map(w => [w.id, w])).values())
     setWallets(uniqueWallets)
+    
     const saved = localStorage.getItem('currentWalletId')
     setCurrentWallet(uniqueWallets.find(w => w.id === saved) || uniqueWallets[0])
   }
 
-  // Fetch transactions
+  // 2. Fetch Transactions
   const fetchData = async () => {
     if (!currentWallet) return
-    let query = supabase
-      .from('transactions')
-      .select('*')
-      .eq('wallet_id', currentWallet.id)
-      .order('date', { ascending: false })
+    setLoading(true)
+    
+    try {
+      let query = supabase
+        .from('transactions')
+        .select('*')
+        .eq('wallet_id', currentWallet.id)
+        .order('date', { ascending: false })
 
-    if (search) query = query.ilike('item', `%${search}%`)
-    if (selectedDate) {
-      const [y, m] = selectedDate.split('-')
-      query = query.gte('date', `${y}-${m}-01`)
-                   .lt('date', `${y}-${(parseInt(m) + 1).toString().padStart(2, '0')}-01`)
+      if (search) query = query.ilike('item', `%${search}%`)
+      if (selectedDate) {
+        const [y, m] = selectedDate.split('-')
+        // Simple month filtering logic
+        const start = `${y}-${m}-01`
+        // Calculate end date properly (next month's 1st day)
+        const end = new Date(parseInt(y), parseInt(m), 1).toISOString().split('T')[0]
+        query = query.gte('date', start).lt('date', end)
+      }
+      if (selectedCategory) query = query.eq('category', selectedCategory)
+
+      const { data, error } = await query
+      if (error) throw error
+      setTransactions(data || [])
+    } catch (err) {
+      console.error("Error fetching transactions:", err)
+    } finally {
+      setLoading(false)
     }
-    if (selectedCategory) query = query.eq('icon', selectedCategory)
-
-    const { data, error } = await query
-    if (error) console.error(error)
-    else setTransactions(data || [])
   }
 
-  useEffect(() => { loadWallets() }, [])
+  useEffect(() => {
+    loadWallets();
+  }, []);
+  useEffect(() => {
+    const handleWalletChange = () => {
+      // Force reload current wallet from localStorage
+      const savedId = localStorage.getItem('currentWalletId');
+      if (savedId && wallets.length > 0) {
+        const found = wallets.find(w => w.id === savedId) || wallets[0];
+        setCurrentWallet(found);
+      }
+      // This will trigger fetchData() because currentWallet changed
+    };
+
+    window.addEventListener('walletChanged', handleWalletChange);
+    window.addEventListener('storage', handleWalletChange);
+
+    return () => {
+      window.removeEventListener('walletChanged', handleWalletChange);
+      window.removeEventListener('storage', handleWalletChange);
+    };
+  }, [wallets]);
   useEffect(() => { fetchData() }, [currentWallet, search, selectedDate, selectedCategory])
 
-  // Handlers
+  // 3. Save Entry (Add/Edit)
   const handleSaveEntry = async () => {
     if (!newEntry.item.trim() || !newEntry.price) return alert('Please fill Item and Amount')
+    
+    // Get current user for user_id field
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return alert("You must be logged in")
 
     const payload = {
       wallet_id: currentWallet.id,
+      user_id: user.id, // IMPORTANT: Linking transaction to user
       item: newEntry.item,
       price: parseFloat(newEntry.price),
       store: newEntry.store || (entryType === 'income' ? 'Income Source' : 'Store'),
       date: newEntry.date,
-      icon: newEntry.icon,
+      category: ICON_TO_TEXT[newEntry.icon] || 'Shopping',
       category_type: entryType
     }
 
-    if (editingItem) {
-      await supabase.from('transactions').update(payload).eq('id', editingItem.id)
-    } else {
-      await supabase.from('transactions').insert(payload)
+    try {
+      if (editingItem) {
+        const { error } = await supabase.from('transactions').update(payload).eq('id', editingItem.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('transactions').insert(payload)
+        if (error) throw error
+      }
+      
+      setShowAddModal(false)
+      setEditingItem(null)
+      // Reset form
+      setNewEntry({
+        item: '', price: '', store: '',
+        date: new Date().toISOString().split('T')[0],
+        icon: entryType === 'income' ? '💵' : '🛍️'
+      })
+      fetchData() // Refresh list
+    } catch (err) {
+      alert("Error saving transaction: " + err.message)
     }
-
-    setShowAddModal(false)
-    setEditingItem(null)
-    setNewEntry({
-      item: '', price: '', store: '',
-      date: new Date().toISOString().split('T')[0],
-      icon: entryType === 'income' ? '💵' : '🛍️' // Use specific icons
-    })
-    fetchData()
   }
 
+  // 4. Delete Entry
   const handleDelete = async (id) => {
     if (!confirm('Delete this entry?')) return
     await supabase.from('transactions').delete().eq('id', id)
@@ -141,58 +227,99 @@ export default function Dashboard() {
     setShowAddModal(true)
   }
 
-  // Calculations
+  // --- CALCULATIONS ---
   const totalIncome = transactions.filter(t => t.category_type === 'income').reduce((s, t) => s + t.price, 0)
   const totalExpense = transactions.filter(t => t.category_type !== 'income').reduce((s, t) => s + t.price, 0)
   const balance = totalIncome - totalExpense
 
-  const formatDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  // Chart Logic: Income vs Expense %
+  const totalVolume = totalIncome + totalExpense
+  const incomePct = totalVolume === 0 ? 0 : (totalIncome / totalVolume) * 100
+  const expensePct = totalVolume === 0 ? 0 : (totalExpense / totalVolume) * 100
+
+  const formatDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
   const getMonthName = (d) => new Date(d + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })
 
-  // --- START OF NEW UI STRUCTURE ---
+  // --- RENDER ---
   return (
-    // Use padding: 0 20px for mobile width, and max-width 1200px for desktop
-    <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: '-apple-system, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' }}>
       
-      {/* HEADER & SUMMARY (MOBILE-FIRST) */}
-      <div style={{ background: COLORS.white, padding: '20px 0 0', borderBottom: `1px solid ${COLORS.border}` }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 20px' }}>
+      {/* 1. HEADER & SUMMARY CARD (Mobile First) */}
+      <div style={{ background: COLORS.white, padding: '20px 0 10px', borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '0 20px' }}>
           
-          {/* TOP BAR: Month/Filter & Wallet/Profile Selector */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <button 
-              onClick={() => {/* Open Month Picker Modal */}}
-              style={headerTitleStyle}
-            >
+          {/* Top Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', fontSize: '18px', color: COLORS.textDark }}>
               {getMonthName(selectedDate)}
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
+              {/* Native Month Picker hidden but clickable */}
+              <input 
+                type="month" 
+                style={{ position: 'absolute', opacity: 0, cursor: 'pointer', width: '120px' }} 
+                value={selectedDate} 
+                onChange={e => setSelectedDate(e.target.value)} 
+              />
+            </div>
             
-            <button 
-               onClick={() => {/* Open Wallet/Profile Modal */}}
-               style={profileBtnStyle}>
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            </button>
+            {/* Wallet Selector Mockup (or active wallet name) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: COLORS.bg, borderRadius: '20px', fontSize: '13px', fontWeight: '600' }}>
+              <Wallet size={14} />
+              {currentWallet ? currentWallet.name : 'Loading...'}
+            </div>
           </div>
 
-          {/* SUMMARY CARD (Gradient Style) */}
+          {/* GRADIENT SUMMARY CARD WITH CHART */}
           <div style={summaryCardStyle}>
-            <p style={summaryTextStyle}>Current Balance in {currentWallet ? currentWallet.name : 'Wallet'}</p>
-            <h2 style={{ fontSize: '32px', fontWeight: '800', margin: '8px 0 16px' }}>
-              RM {balance.toFixed(2)}
-            </h2>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
-              <div>
-                <p style={summaryTextStyle}>Total Income</p>
-                <p style={{ fontSize: '16px', fontWeight: '600', color: COLORS.successLight }}>
-                  +RM {totalIncome.toFixed(2)}
-                </p>
+            {/* Left Side: Balance & Text */}
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '13px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Total Balance</p>
+              <h2 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '16px', letterSpacing: '-0.5px' }}>
+                RM {balance.toFixed(2)}
+              </h2>
+              
+              <div style={{ display: 'flex', gap: '24px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', opacity: 0.9 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }}></div> Income
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '700', marginTop: '2px' }}>RM {totalIncome.toFixed(2)}</p>
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', opacity: 0.9 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.4)' }}></div> Expense
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '700', marginTop: '2px' }}>RM {totalExpense.toFixed(2)}</p>
+                </div>
               </div>
-              <div>
-                <p style={summaryTextStyle}>Total Expense</p>
-                <p style={{ fontSize: '16px', fontWeight: '600', color: COLORS.dangerLight }}>
-                  -RM {totalExpense.toFixed(2)}
-                </p>
+            </div>
+
+            {/* Right Side: Circle Chart (Pure SVG) */}
+            <div style={{ position: 'relative', width: '80px', height: '80px', flexShrink: 0 }}>
+              <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                {/* Background Circle */}
+                <path
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.2)"
+                  strokeWidth="4"
+                />
+                {/* Income Segment (White) */}
+                <path
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  fill="none"
+                  stroke="#FFFFFF"
+                  strokeWidth="4"
+                  strokeDasharray={`${incomePct}, 100`}
+                  style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                />
+              </svg>
+              {/* Inner Percentage Label */}
+              <div style={{ 
+                position: 'absolute', inset: 0, display: 'flex', 
+                alignItems: 'center', justifyContent: 'center', 
+                fontSize: '10px', fontWeight: 'bold' 
+              }}>
+                {Math.round(incomePct)}%
               </div>
             </div>
           </div>
@@ -200,96 +327,109 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div style={{ maxWidth: '1200px', margin: '30px auto', padding: '0 20px' }}>
+      <div style={{ maxWidth: '1000px', margin: '20px auto', padding: '0 20px 80px' }}>
         {currentWallet ? (
           <>
-            {/* CONTROLS (View Toggle is kept here) */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
-              <div style={{ display: 'flex', background: COLORS.white, borderRadius: '8px', padding: '4px', border: `1px solid ${COLORS.border}` }}>
-                <ViewBtn icon={<List size={16}/>} active={viewType==='list'} onClick={()=>setViewType('list')} />
-                <ViewBtn icon={<LayoutGrid size={16}/>} active={viewType==='grid'} onClick={()=>setViewType('grid')} />
-              </div>
-              {/* ActionBtn removed, replaced by FAB */}
-            </div>
-
-            {/* FILTERS (Responsive Layout) */}
-            <div style={filterGridStyle}>
-              {/* Search */}
-              <div style={{position:'relative'}}>
-                <Search size={18} style={{position:'absolute', left:14, top:12, color:COLORS.textGray}}/>
-                <input style={inputStyle} placeholder="Search item or store..." value={search} onChange={e=>setSearch(e.target.value)} />
-              </div>
+            {/* 2. FILTERS & VIEW TOGGLE */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '4px' }}>
               
-              {/* Category Filter */}
-              <select style={inputStyle} value={selectedCategory} onChange={e=>setSelectedCategory(e.target.value)}>
-                <option value="">All Categories</option>
-                {[...expenseIcons, ...incomeIcons].map(icon => (
-                  <option key={icon} value={icon}>{icon} {ICON_LABELS[icon]}</option>
-                ))}
-              </select>
-              
-              {/* Month Filter */}
-              <input type="month" style={inputStyle} value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} />
+              {/* Search Bar */}
+              <div style={{ position: 'relative', flex: 1, minWidth: '140px' }}>
+                <Search size={16} style={{ position: 'absolute', left: 12, top: 12, color: COLORS.textGray }} />
+                <input 
+                  style={searchStyle} 
+                  placeholder="Search..." 
+                  value={search} 
+                  onChange={e => setSearch(e.target.value)} 
+                />
+              </div>
+              {/* Category Chips (Optional but nice for mobile) */}
+              <div style={{ position: 'relative', flex: 1, maxWidth: '210px' }}>
+                <select 
+                  style={{ ...searchStyle, width: '100%'}} 
+                  value={selectedCategory} 
+                  onChange={e => setSelectedCategory(e.target.value)}
+                >
+                  <option value="">All Categories</option>
+                  {[...expenseIcons, ...incomeIcons].map(icon => (
+                    <option key={icon} value={icon}>{icon} {ICON_LABELS[icon]}</option>
+                  ))}
+                </select>
+              </div>
+              {/* View Toggle */}
+              <div style={{ display: 'flex', background: COLORS.white, borderRadius: '10px', padding: '4px', border: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+                <ViewBtn icon={<List size={18}/>} active={viewType==='list'} onClick={()=>setViewType('list')} />
+                <ViewBtn icon={<LayoutGrid size={18}/>} active={viewType==='grid'} onClick={()=>setViewType('grid')} />
+              </div>
             </div>
-
-            {/* TRANSACTIONS */}
-            {transactions.length > 0 ? (
+            {/* 3. TRANSACTIONS LIST */}
+            {loading ? (
+              <p style={{ textAlign: 'center', color: COLORS.textGray }}>Loading...</p>
+            ) : transactions.length > 0 ? (
               viewType === 'list' ? (
-                // List View (Table on Desktop, Collapsible List on Mobile)
-                <div style={{ background: COLORS.white, borderRadius: '12px', overflow: 'hidden' }}>
-                  {/* For mobile, hide the table headers and use flex/grid */}
-                  <table style={mobileTableStyle}>
-                    <thead style={tableHeaderStyle}>
-                      <tr>
-                        {['Date', 'Item', 'Store/Source', 'Amount', ''].map(h => 
-                          <th key={h} style={tableHeadCellStyle(h)}>{h}</th>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transactions.map(t => (
-                        <tr key={t.id} style={tableRowStyle}>
-                          <td style={tableCellDateStyle}>{formatDate(t.date)}</td>
-                          <td style={tableCellItemStyle}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <span style={{ fontSize: '24px' }}>{t.icon}</span>
-                              <div>
-                                <div style={{ fontWeight: '600' }}>{t.item}</div>
-                                <TypeBadge type={t.category_type} />
-                              </div>
-                            </div>
-                          </td>
-                          <td style={tableCellDetailStyle}>{t.store || '-'}</td>
-                          <td style={tableCellAmountStyle(t.category_type)}>
-                            {t.category_type === 'income' ? '+' : '-'} RM {t.price.toFixed(2)}
-                          </td>
-                          <td style={tableCellActionsStyle}>
-                            <button onClick={()=>handleEdit(t)} style={actionBtnStyle}><Edit2 size={14}/></button>
-                            <button onClick={()=>handleDelete(t.id)} style={{...actionBtnStyle, background: COLORS.dangerLight, color: COLORS.danger}}><Trash2 size={14}/></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div style={{ background: COLORS.white, borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+                  {transactions.map((t, i) => (
+                    <div 
+                      key={t.id} 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'space-between',
+                        padding: '16px 20px',
+                        borderBottom: i === transactions.length - 1 ? 'none' : `1px solid ${COLORS.bg}`
+                      }}
+                    >
+                      {/* Icon & Details */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ 
+                          width: '42px', height: '42px', borderRadius: '12px', 
+                          background: t.category_type === 'income' ? COLORS.successLight : COLORS.dangerLight,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '20px'
+                        }}>
+                          {TEXT_TO_ICON[t.category] || t.category}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: '600', color: COLORS.textDark, marginBottom: '2px' }}>{t.item}</div>
+                          <div style={{ fontSize: '12px', color: COLORS.textGray }}>{formatDate(t.date)} • {t.store}</div>
+                        </div>
+                      </div>
+
+                      {/* Amount & Actions */}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ 
+                          fontWeight: '700', fontSize: '15px', 
+                          color: t.category_type === 'income' ? COLORS.success : COLORS.danger,
+                          marginBottom: '4px'
+                        }}>
+                          {t.category_type === 'income' ? '+' : '-'} {t.price.toFixed(2)}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <Edit2 size={14} color={COLORS.textGray} style={{ cursor: 'pointer' }} onClick={() => handleEdit(t)} />
+                          <Trash2 size={14} color={COLORS.danger} style={{ cursor: 'pointer' }} onClick={() => handleDelete(t.id)} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                // Grid View
                 <div style={gridContainerStyle}>
                   {transactions.map(t => (
                     <div key={t.id} style={gridCardStyle}>
-                      <div style={gridActionsStyle}>
-                        <button onClick={()=>handleEdit(t)} style={iconBtnStyle}><Edit2 size={14}/></button>
-                        <button onClick={()=>handleDelete(t.id)} style={{...iconBtnStyle, color:COLORS.danger, background: COLORS.dangerLight}}><Trash2 size={14}/></button>
-                      </div>
-                      <div style={{ fontSize: '32px', marginBottom: '16px' }}>{t.icon}</div>
-                      <h3 style={{ fontWeight: '700', marginBottom: '4px' }}>{t.item}</h3>
-                      <p style={{ fontSize: '13px', color: COLORS.textGray, marginBottom: '16px' }}>{t.store || '—'}</p>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: COLORS.textGray }}>{formatDate(t.date)}</span>
-                        <span style={{ fontSize: '18px', fontWeight: '700', color: t.category_type==='income' ? COLORS.success : COLORS.danger }}>
-                          {t.category_type === 'income' ? '+' : '-'} RM {t.price.toFixed(2)}
-                        </span>
-                      </div>
+                       <div style={{ fontSize: '32px', marginBottom: '12px' }}>{TEXT_TO_ICON[t.category] || t.category}</div>
+                       <div style={{ fontWeight: '700', color: COLORS.textDark }}>{t.item}</div>
+                       <div style={{ fontSize: '12px', color: COLORS.textGray, marginBottom: '12px' }}>{formatDate(t.date)}</div>
+                       <div style={{ 
+                          fontWeight: '700', fontSize: '16px', 
+                          color: t.category_type === 'income' ? COLORS.success : COLORS.danger 
+                       }}>
+                         {t.category_type === 'income' ? '+' : '-'} {t.price.toFixed(2)}
+                       </div>
+                       
+                       <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8 }}>
+                          <button onClick={()=>handleEdit(t)} style={iconBtnStyle}><Edit2 size={14}/></button>
+                          <button onClick={()=>handleDelete(t.id)} style={{...iconBtnStyle, color:COLORS.danger, background: COLORS.dangerLight}}><Trash2 size={14}/></button>
+                       </div>
                     </div>
                   ))}
                 </div>
@@ -297,68 +437,71 @@ export default function Dashboard() {
             ) : (
               <div style={emptyStateStyle}>
                 <TrendingUp size={48} color={COLORS.textGray} style={{ opacity: 0.3, marginBottom: 16 }} />
-                <p style={{ color: COLORS.textGray }}>No transactions found for the current filter.</p>
+                <p style={{ color: COLORS.textGray }}>No transactions found.</p>
               </div>
             )}
           </>
-        ) : <p style={{textAlign:'center', marginTop: 50}}>Loading Wallet...</p>}
+        ) : (
+          <div style={{ textAlign: 'center', marginTop: '40px', color: COLORS.textGray }}>
+            Loading wallets...
+          </div>
+        )}
       </div>
 
-      {/* FLOATING ACTION BUTTON */}
+      {/* FAB (Floating Action Button) */}
       {currentWallet && (
-          <button
-              style={fabStyle}
-              onClick={() => {
-                  setEditingItem(null);
-                  setEntryType('expense');
-                  setNewEntry({
-                      item: '', price: '', store: '',
-                      date: new Date().toISOString().split('T')[0],
-                      icon: '🛍️'
-                  }); 
-                  setShowAddModal(true);
-              }}
-              title="Add New Transaction"
-          >
-              <Plus size={28} />
-          </button>
+        <button
+          style={fabStyle}
+          onClick={() => {
+            setEditingItem(null)
+            setEntryType('expense')
+            setNewEntry({
+              item: '', price: '', store: '',
+              date: new Date().toISOString().split('T')[0],
+              icon: '🛍️'
+            })
+            setShowAddModal(true)
+          }}
+        >
+          <Plus size={28} />
+        </button>
       )}
 
-      {/* ADD/EDIT MODAL - The modal uses fixed position so it should always work well on mobile */}
+      {/* ADD/EDIT MODAL */}
       {showAddModal && (
         <div style={modalOverlayStyle} onClick={() => setShowAddModal(false)}>
           <div style={modalBoxStyle} onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '24px', color: COLORS.textDark }}>
-              {editingItem ? 'Edit' : 'Add'} Entry
+              {editingItem ? 'Edit' : 'Add'} Transaction
             </h2>
 
-            <div style={{ display: 'flex', background: COLORS.bg, padding: 6, borderRadius: 12, marginBottom: 24, width: 'fit-content' }}>
-              <TabBtn label="Expense" active={entryType==='expense'} color={COLORS.danger} 
-                onClick={() => { setEntryType('expense'); setNewEntry({...newEntry, icon: '🛍️'}) }} />
-              <TabBtn label="Income" active={entryType==='income'} color={COLORS.success} 
-                onClick={() => { setEntryType('income'); setNewEntry({...newEntry, icon: '💵'}) }} />
+            {/* Type Switcher */}
+            <div style={{ display: 'flex', background: COLORS.bg, padding: 4, borderRadius: 12, marginBottom: 24 }}>
+              <TabBtn 
+                label="Expense" 
+                active={entryType==='expense'} 
+                color={COLORS.danger} 
+                onClick={() => { setEntryType('expense'); setNewEntry({...newEntry, icon: '🛍️'}) }} 
+              />
+              <TabBtn 
+                label="Income" 
+                active={entryType==='income'} 
+                color={COLORS.success} 
+                onClick={() => { setEntryType('income'); setNewEntry({...newEntry, icon: '💵'}) }} 
+              />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24, padding: '0 10px', overflowX: 'auto' }}>
+            {/* Icon Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>
               {(entryType === 'expense' ? expenseIcons : incomeIcons).map(icon => (
                 <button
                   key={icon}
                   onClick={() => setNewEntry({...newEntry, icon})}
                   style={{
-                    fontSize: '20px',
-                    borderRadius: '12px',
-                    width:'50px',
-                    minWidth: '50px',
-                    height:'50px',
-                    background: newEntry.icon === icon 
-                      ? (entryType === 'income' ? COLORS.successLight : COLORS.dangerLight) 
-                      : COLORS.white,
-                    border: newEntry.icon === icon 
-                      ? `3px solid ${entryType === 'income' ? COLORS.success : COLORS.danger}` 
-                      : `2px solid ${COLORS.border}`,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    boxShadow: newEntry.icon === icon ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                    fontSize: '22px', borderRadius: '10px', height: '44px',
+                    background: newEntry.icon === icon ? (entryType === 'income' ? COLORS.successLight : COLORS.dangerLight) : COLORS.white,
+                    border: newEntry.icon === icon ? `2px solid ${entryType === 'income' ? COLORS.success : COLORS.danger}` : `1px solid ${COLORS.border}`,
+                    cursor: 'pointer'
                   }}
                 >
                   {icon}
@@ -366,10 +509,32 @@ export default function Dashboard() {
               ))}
             </div>
 
-            <input placeholder="Item" value={newEntry.item} onChange={e=>setNewEntry({...newEntry, item:e.target.value})} style={modalInputStyle} />
-            <input type="number" placeholder="Amount" value={newEntry.price} onChange={e=>setNewEntry({...newEntry, price:e.target.value})} style={modalInputStyle} />
-            <input placeholder={entryType==='income'?"Source":"Store"} value={newEntry.store} onChange={e=>setNewEntry({...newEntry, store:e.target.value})} style={modalInputStyle} />
-            <input type="date" value={newEntry.date} onChange={e=>setNewEntry({...newEntry, date:e.target.value})} style={{...modalInputStyle, marginBottom: 24}} />
+            {/* Inputs */}
+            <input 
+              placeholder="Item Name (e.g. Groceries)" 
+              value={newEntry.item} 
+              onChange={e=>setNewEntry({...newEntry, item:e.target.value})} 
+              style={modalInputStyle} 
+            />
+            <input 
+              type="number" 
+              placeholder="Amount (RM)" 
+              value={newEntry.price} 
+              onChange={e=>setNewEntry({...newEntry, price:e.target.value})} 
+              style={modalInputStyle} 
+            />
+            <input 
+              placeholder={entryType==='income'?"Source":"Store / Location"} 
+              value={newEntry.store} 
+              onChange={e=>setNewEntry({...newEntry, store:e.target.value})} 
+              style={modalInputStyle} 
+            />
+            <input 
+              type="date" 
+              value={newEntry.date} 
+              onChange={e=>setNewEntry({...newEntry, date:e.target.value})} 
+              style={{...modalInputStyle, marginBottom: 24}} 
+            />
 
             <div style={{ display: 'flex', gap: 12 }}>
               <button onClick={handleSaveEntry} style={{...primaryBtnStyle, background: entryType==='income'?COLORS.success:COLORS.danger}}>
@@ -384,123 +549,60 @@ export default function Dashboard() {
   )
 }
 
-// COMPONENTS & STYLES
-const StatBox = ({ label, amount, color }) => (
-  <div style={{ textAlign: 'center' }}>
-    <p style={{ fontSize: '13px', color: COLORS.textGray, marginBottom: 4, textTransform: 'uppercase' }}>{label}</p>
-    <p style={{ fontSize: '28px', fontWeight: '700', color }}>RM {Math.abs(amount).toFixed(2)}</p>
-  </div>
-)
+// --- SUB COMPONENTS & STYLES ---
 
 const ViewBtn = ({ icon, active, onClick }) => (
-  <button onClick={onClick} style={{ padding: '8px 16px', borderRadius: 6, background: active ? COLORS.bg : 'transparent', boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', border: 'none', cursor: 'pointer' }}>
+  <button onClick={onClick} style={{ padding: '6px 10px', borderRadius: 8, background: active ? COLORS.bg : 'transparent', border: 'none', cursor: 'pointer', color: active ? COLORS.textDark : COLORS.textGray }}>
     {icon}
   </button>
 )
 
-const TypeBadge = ({ type }) => (
-  <span style={{
-    fontSize: 10, padding: '2px 8px', borderRadius: 4,
-    background: type==='income' ? COLORS.successLight : COLORS.dangerLight,
-    color: type==='income' ? COLORS.success : COLORS.danger,
-    fontWeight: 700, textTransform: 'uppercase'
-  }}>
-    {type === 'income' ? 'IN' : 'OUT'}
-  </span>
-)
-
 const TabBtn = ({ label, active, color, onClick }) => (
-  <button onClick={onClick} style={{ flex: 1, padding: 10, borderRadius: 6, background: active ? COLORS.white : 'transparent', color: active ? color : COLORS.textGray, fontWeight: 600, boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', border: 'none' }}>
+  <button onClick={onClick} style={{ flex: 1, padding: '10px', borderRadius: 10, background: active ? COLORS.white : 'transparent', color: active ? color : COLORS.textGray, fontWeight: 600, boxShadow: active ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', border: 'none', transition: 'all 0.2s' }}>
     {label}
   </button>
 )
 
-// --- NEW/MODIFIED STYLES FOR MOBILE UI ---
+// STYLES
 const summaryCardStyle = {
-    background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.success} 100%)`, 
-    borderRadius: '16px',
-    padding: '24px',
-    color: COLORS.white,
-    boxShadow: '0 10px 20px rgba(0, 0, 0, 0.2)',
-    marginBottom: '24px',
-};
-const summaryTextStyle = { 
-    fontSize: '13px', 
-    fontWeight: '500', 
-    opacity: 0.8 
-};
-const headerTitleStyle = {
-    fontSize: '18px', 
-    fontWeight: '700', 
-    color: COLORS.textDark, 
-    background: 'none', 
-    border: 'none', 
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-};
-const profileBtnStyle = {
-    width: 36, height: 36, 
-    borderRadius: '50%', 
-    background: COLORS.bg, 
-    border: `1px solid ${COLORS.border}`, 
-    display: 'flex', 
-    alignItems: 'center', 
-    justifyContent: 'center',
-    cursor: 'pointer'
-};
+  background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.success} 100%)`,
+  borderRadius: '24px',
+  padding: '28px',
+  color: COLORS.white,
+  boxShadow: '0 12px 24px rgba(37, 99, 235, 0.2)',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center'
+}
+
 const fabStyle = {
-    position: 'fixed',
-    bottom: '24px',
-    right: '24px',
-    width: '56px',
-    height: '56px',
-    borderRadius: '50%',
-    backgroundColor: COLORS.primary,
-    color: COLORS.white,
-    boxShadow: '0 8px 16px rgba(0, 0, 0, 0.4)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: 'none',
-    cursor: 'pointer',
-    zIndex: 900
-};
+  position: 'fixed', bottom: '24px', right: '24px',
+  width: '60px', height: '60px', borderRadius: '50%',
+  backgroundColor: COLORS.primary, color: COLORS.white,
+  boxShadow: '0 8px 20px rgba(37, 99, 235, 0.4)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  border: 'none', cursor: 'pointer', zIndex: 100,
+  transition: 'transform 0.1s'
+}
 
-// Filter Grid Style (changes based on screen size, though inline styles are tricky)
-const filterGridStyle = { 
-    display: 'grid', 
-    gridTemplateColumns: '1fr', // Mobile: Stacked columns
-    gap: '12px', 
-    marginBottom: '24px',
-    '@media (min-width: 768px)': { // Desktop/Tablet overrides
-        gridTemplateColumns: '3fr 1fr 1fr',
-        gap: '16px',
-    }
-};
+const searchStyle = {
+  width: '100%', padding: '10px 10px 10px 40px', 
+  borderRadius: '12px', border: `1px solid ${COLORS.border}`, 
+  fontSize: '14px', outline: 'none', background: COLORS.white 
+}
 
-const inputStyle = { width: '100%', padding: '12px 12px 12px 44px', borderRadius: 10, border: `1px solid ${COLORS.border}`, fontSize: 14, outline: 'none', WebkitAppearance: 'none' }
-const modalInputStyle = { width: '100%', padding: 12, marginBottom: 12, borderRadius: 8, border: `1px solid ${COLORS.border}` }
-const actionBtnStyle = { background: COLORS.primary, color: COLORS.white, border: 'none', borderRadius: 6, padding: '6px 12px', marginLeft: 8 }
-const iconBtnStyle = { border: 'none', padding: 8, borderRadius: 6, background: COLORS.bg, cursor: 'pointer' }
-const modalOverlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }
-const modalBoxStyle = { background: COLORS.white, padding: 32, borderRadius: 16, width: '90%', maxWidth: 450, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }
-const primaryBtnStyle = { flex: 1, padding: 14, color: 'white', border: 'none', borderRadius: 8, fontWeight: 600 }
-const cancelBtnStyle = { flex: 1, padding: 14, background: COLORS.bg, color: COLORS.textDark, border: 'none', borderRadius: 8, fontWeight: 600 }
-const emptyStateStyle = { textAlign: 'center', padding: '80px 20px', background: COLORS.white, borderRadius: '12px' }
+const modalInputStyle = { 
+  width: '100%', padding: '14px', marginBottom: '12px', 
+  borderRadius: '12px', border: `1px solid ${COLORS.border}`, 
+  fontSize: '15px', outline: 'none' 
+}
 
-// Transaction Styles (Simplified for mobile list view)
-const mobileTableStyle = { width: '100%', borderCollapse: 'collapse', '@media (max-width: 767px)': { display: 'block' } };
-const tableHeaderStyle = { background: '#FAFAFA', '@media (max-width: 767px)': { display: 'none' } }; // Hide headers on mobile
-const tableRowStyle = { borderBottom: `1px solid ${COLORS.border}` };
-const tableHeadCellStyle = (h) => ({ padding: '16px 24px', fontSize: '13px', textAlign: h==='Amount'?'right':'left', color: COLORS.textDark });
-const tableCellDateStyle = { padding: '16px 24px', color: COLORS.textGray };
-const tableCellItemStyle = { padding: '16px 24px' };
-const tableCellDetailStyle = { padding: '16px 24px', color: COLORS.textGray };
-const tableCellAmountStyle = (type) => ({ padding: '16px 24px', textAlign: 'right', fontWeight: '700', color: type==='income' ? COLORS.success : COLORS.danger });
-const tableCellActionsStyle = { padding: '16px 24px', textAlign: 'right' };
+const gridContainerStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '16px' }
+const gridCardStyle = { background: COLORS.white, padding: '20px', borderRadius: '16px', position: 'relative', border: `1px solid ${COLORS.border}` }
+const iconBtnStyle = { border: 'none', padding: 6, borderRadius: 6, background: COLORS.bg, cursor: 'pointer' }
+const emptyStateStyle = { textAlign: 'center', padding: '60px 20px', background: COLORS.white, borderRadius: '16px' }
 
-const gridContainerStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' };
-const gridCardStyle = { background: COLORS.white, padding: '24px', borderRadius: '12px', border: `1px solid ${COLORS.border}`, position: 'relative' };
-const gridActionsStyle = { position: 'absolute', top: 16, right: 16, display: 'flex', gap: 8 };
+const modalOverlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }
+const modalBoxStyle = { background: COLORS.white, padding: '28px', borderRadius: '24px', width: '100%', maxWidth: '400px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }
+const primaryBtnStyle = { flex: 1, padding: '14px', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 600, fontSize: '15px' }
+const cancelBtnStyle = { flex: 1, padding: '14px', background: COLORS.bg, color: COLORS.textDark, border: 'none', borderRadius: '12px', fontWeight: 600, fontSize: '15px' }
