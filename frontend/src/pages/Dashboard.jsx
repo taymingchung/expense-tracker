@@ -1,796 +1,506 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { API_URL } from '../config'
-import { Search, Calendar, PiggyBank, Plus, X, Edit2, Trash2, FileUp, TrendingUp, WalletCards } from 'lucide-react'
+import { Search, Plus, Edit2, Trash2, TrendingUp, LayoutGrid, List } from 'lucide-react'
 
-// Premium Sapphire Blue Palette
-const SAPPHIRE_BLUE = "#2563EB";
-const SAPPHIRE_LIGHT = "#DBEAFE";
-const SAPPHIRE_DARK = "#1E40AF";
-const SKY_BLUE = "#3B82F6";
-const EMERALD_GREEN = "#10B981";
-const RED_DANGER = "#EF4444";
-const WHITE = "#FFFFFF";
-const LIGHT_GRAY = "#F3F4F6";
-const DARK_NAVY = "#1E3A8A";
-const TEXT_DARK = "#1F2937";
-const TEXT_MUTED = "#6B7280";
-const BORDER_LIGHT = "#E5E7EB";
+const COLORS = {
+  primary: "#2563EB",
+  success: "#10B981",
+  successLight: "#ECFDF5",
+  danger: "#EF4444",
+  dangerLight: "#FEF2F2",
+  textDark: "#111827",
+  textGray: "#6B7280",
+  bg: "#F3F4F6",
+  white: "#FFFFFF",
+  border: "#E5E7EB"
+};
+
+// Real emojis — this is what makes it beautiful!
+const expenseIcons = [
+  '🛍️', '🍔', '🚗', '🩺', '📚', '🎬', '✈️', '🏠', '⚡', '💻', '👕', '☕', '🎟️'
+]
+
+const incomeIcons = [
+  '💵', '💼', '📈', '🎁'
+]
+
+// For category filter dropdown
+const ICON_LABELS = {
+  '🛍️': 'Shopping', '🍔': 'Food', '🚗': 'Transport', '🩺': 'Health',
+  '📚': 'Education', '🎬': 'Entertainment', '✈️': 'Travel', '🏠': 'Housing',
+  '⚡': 'Utilities', '💻': 'Electronics', '👕': 'Clothing', 
+  '☕': 'Coffee', '🎟️': 'Events',
+  '💵': 'Salary', '💼': 'Business', '📈': 'Investment', '🎁': 'Bonus'
+}
 
 export default function Dashboard() {
-  const [expenses, setExpenses] = useState([])
+  const [transactions, setTransactions] = useState([])
   const [wallets, setWallets] = useState([])
   const [currentWallet, setCurrentWallet] = useState(null)
   const [search, setSearch] = useState('')
-  const [selectedDate, setSelectedDate] = useState('')
-  const [file, setFile] = useState(null)
-  const [uploading, setUploading] = useState(false)
-  const [showAddExpense, setShowAddExpense] = useState(false)
-  const [showUploadModal, setShowUploadModal] = useState(false)
-  const [editingExpense, setEditingExpense] = useState(null)
-  const fileInputRef = useRef(null)
-  const [newExpense, setNewExpense] = useState({
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 7))
+  const [viewType, setViewType] = useState('list')
+  const [selectedCategory, setSelectedCategory] = useState('')
+
+  // Modal & Form
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [editingItem, setEditingItem] = useState(null)
+  const [entryType, setEntryType] = useState('expense')
+  const [newEntry, setNewEntry] = useState({
     item: '',
     price: '',
     store: '',
     date: new Date().toISOString().split('T')[0],
-    icon: '🛒'
+    icon: 'shopping'
   })
 
-  const expenseIcons = ['🛒', '🍔', '🚗', '🏥', '📚', '🎬', '✈️', '🏠', '⚡', '💻', '👕', '🎮', '🌮', '☕', '🎫']
-
+  // Load wallets
   const loadWallets = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
-    const { data: owned } = await supabase
-      .from('wallets')
-      .select('id, name')
-      .eq('owner_id', user.id)
-
-    const { data: shared } = await supabase
-      .from('wallet_members')
-      .select('wallets!inner(id, name)')
-      .eq('user_id', user.id)
-
-    const sharedWallets = shared?.map(m => ({ id: m.wallets.id, name: m.wallets.name })) || []
-    const walletMap = new Map()
-    ;[...(owned || []), ...sharedWallets].forEach(w => {
-      if (!walletMap.has(w.id)) {
-        walletMap.set(w.id, w)
-      }
-    })
-    const allWallets = Array.from(walletMap.values())
-    setWallets(allWallets)
-
-    const savedId = localStorage.getItem('currentWalletId')
-    const selected = allWallets.find(w => w.id === savedId) || allWallets[0] || null
-    setCurrentWallet(selected)
+    const { data: owned } = await supabase.from('wallets').select('id, name').eq('owner_id', user.id)
+    const { data: shared } = await supabase.from('wallet_members').select('wallets!inner(id, name)').eq('user_id', user.id)
+    const allWallets = [...(owned || []), ...(shared?.map(m => m.wallets) || [])]
+    const uniqueWallets = Array.from(new Map(allWallets.map(w => [w.id, w])).values())
+    setWallets(uniqueWallets)
+    const saved = localStorage.getItem('currentWalletId')
+    setCurrentWallet(uniqueWallets.find(w => w.id === saved) || uniqueWallets[0])
   }
 
-  const fetchExpenses = async () => {
-    if (!currentWallet) {
-      setExpenses([])
-      return
-    }
-    const token = (await supabase.auth.getSession()).data.session?.access_token
-    let url = `${API_URL}/expenses?wallet_id=${currentWallet.id}`
-    if (search) url += `&search=${search}`
+  // Fetch transactions
+  const fetchData = async () => {
+    if (!currentWallet) return
+    let query = supabase
+      .from('transactions')
+      .select('*')
+      .eq('wallet_id', currentWallet.id)
+      .order('date', { ascending: false })
+
+    if (search) query = query.ilike('item', `%${search}%`)
     if (selectedDate) {
-      const [year, month] = selectedDate.split('-');
-      url += `&month=${month}&year=${year}`;
+      const [y, m] = selectedDate.split('-')
+      query = query.gte('date', `${y}-${m}-01`)
+                   .lt('date', `${y}-${(parseInt(m) + 1).toString().padStart(2, '0')}-01`)
     }
+    if (selectedCategory) query = query.eq('icon', selectedCategory)
 
-    try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      const data = await res.json()
-      setExpenses(data || [])
-    } catch (err) {
-      console.error("Fetch expenses error:", err)
-    }
+    const { data, error } = await query
+    if (error) console.error(error)
+    else setTransactions(data || [])
   }
 
-  // Critical Fix: Listen to wallet changes from Navbar
-  useEffect(() => {
-    const handleWalletChange = () => {
-      loadWallets()
-    }
-    window.addEventListener('walletChanged', handleWalletChange)
-    window.addEventListener('storage', handleWalletChange)
-    return () => {
-      window.removeEventListener('walletChanged', handleWalletChange)
-      window.removeEventListener('storage', handleWalletChange)
-    }
-  }, [])
+  useEffect(() => { loadWallets() }, [])
+  useEffect(() => { fetchData() }, [currentWallet, search, selectedDate, selectedCategory])
 
-  useEffect(() => {
-    loadWallets()
-  }, [])
+  // Handlers
+  const handleSaveEntry = async () => {
+    if (!newEntry.item.trim() || !newEntry.price) return alert('Please fill Item and Amount')
 
-  useEffect(() => {
-    fetchExpenses()
-  }, [currentWallet, search, selectedDate])
-
-  const handleAddExpense = async () => {
-    if (!newExpense.item.trim() || !newExpense.price || !currentWallet) {
-      alert('Please fill in item name and price')
-      return
+    const payload = {
+      wallet_id: currentWallet.id,
+      item: newEntry.item,
+      price: parseFloat(newEntry.price),
+      store: newEntry.store || (entryType === 'income' ? 'Income Source' : 'Store'),
+      date: newEntry.date,
+      icon: newEntry.icon,
+      category_type: entryType
     }
 
-    try {
-      const token = (await supabase.auth.getSession()).data.session?.access_token
-      const url = editingExpense 
-        ? `${API_URL}/expenses/${editingExpense.id}` 
-        : `${API_URL}/expenses`
-      const method = editingExpense ? 'PUT' : 'POST'
-
-      const res = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          wallet_id: currentWallet.id,
-          item: newExpense.item,
-          price: parseFloat(newExpense.price),
-          store: newExpense.store || 'Unknown Store',
-          date: newExpense.date,
-          icon: newExpense.icon
-        })
-      })
-
-      if (res.ok) {
-        alert(editingExpense ? 'Expense updated!' : 'Expense added!')
-        setNewExpense({
-          item: '',
-          price: '',
-          store: '',
-          date: new Date().toISOString().split('T')[0],
-          icon: '🛒'
-        })
-        setEditingExpense(null)
-        setShowAddExpense(false)
-        fetchExpenses()
-      }
-    } catch (error) {
-      console.error('Error saving expense:', error)
+    if (editingItem) {
+      await supabase.from('transactions').update(payload).eq('id', editingItem.id)
+    } else {
+      await supabase.from('transactions').insert(payload)
     }
-  }
 
-  const handleDeleteExpense = async (expenseId) => {
-    if (!confirm('Delete this expense?')) return
-
-    try {
-      const token = (await supabase.auth.getSession()).data.session?.access_token
-      const res = await fetch(`${API_URL}/expenses/${expenseId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-
-      if (res.ok) {
-        fetchExpenses()
-      }
-    } catch (error) {
-      console.error('Error deleting expense:', error)
-    }
-  }
-
-  const handleEditExpense = (expense) => {
-    setEditingExpense(expense)
-    setNewExpense({
-      item: expense.item,
-      price: expense.price.toString(),
-      store: expense.store || '',
-      date: expense.date,
-      icon: expense.icon || '🛒'
+    setShowAddModal(false)
+    setEditingItem(null)
+    setNewEntry({
+      item: '', price: '', store: '',
+      date: new Date().toISOString().split('T')[0],
+      icon: entryType === 'income' ? '💵' : '🛍️' // Use specific icons
     })
-    setShowAddExpense(true)
+    fetchData()
   }
 
-  const handleUpload = async () => {
-    if (!file || !currentWallet) return
-    setUploading(true)
-    const token = (await supabase.auth.getSession()).data.session.access_token
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('wallet_id', currentWallet.id)
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this entry?')) return
+    await supabase.from('transactions').delete().eq('id', id)
+    fetchData()
+  }
 
-    const res = await fetch(`${API_URL}/upload`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData
+  const handleEdit = (item) => {
+    setEditingItem(item)
+    setEntryType(item.category_type || 'expense')
+    setNewEntry({
+      item: item.item,
+      price: item.price,
+      store: item.store,
+      date: item.date,
+      icon: item.icon
     })
-    const json = await res.json()
-    alert(json.success ? `Uploaded ${json.inserted} records!` : json.error)
-    setFile(null)
-    setShowUploadModal(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    fetchExpenses()
-    setUploading(false)
+    setShowAddModal(true)
   }
 
-  const total = expenses.reduce((sum, e) => sum + e.price, 0).toFixed(2)
-  const grouped = expenses.reduce((acc, e) => {
-    acc[e.item] = acc[e.item] || []
-    acc[e.item].push(e)
-    return acc
-  }, {})
+  // Calculations
+  const totalIncome = transactions.filter(t => t.category_type === 'income').reduce((s, t) => s + t.price, 0)
+  const totalExpense = transactions.filter(t => t.category_type !== 'income').reduce((s, t) => s + t.price, 0)
+  const balance = totalIncome - totalExpense
 
+  const formatDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const getMonthName = (d) => new Date(d + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })
+
+  // --- START OF NEW UI STRUCTURE ---
   return (
-    <div style={{ minHeight: '100vh', background: '#FAFBFC', padding: '24px 0', paddingBottom: '48px' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 16px' }}>
-
-        {wallets.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-            <div style={{
-              width: '100px',
-              height: '100px',
-              background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
-              borderRadius: '20px',
-              margin: '0 auto 24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: `0 20px 50px rgba(37, 99, 235, 0.2)`
-            }}>
-              <PiggyBank size={50} color="white" />
-            </div>
-            <h2 style={{ fontSize: '32px', fontWeight: '700', color: TEXT_DARK, marginBottom: '12px' }}>
-              Welcome to ExpenseTracker
-            </h2>
-            <p style={{ fontSize: '16px', color: TEXT_MUTED, maxWidth: '500px', margin: '0 auto 32px' }}>
-              Start tracking your expenses by creating your first wallet
-            </p>
-            <button
-              onClick={() => window.location.href = '/'}
-              style={{
-                background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
-                color: 'white',
-                padding: '12px 28px',
-                borderRadius: '10px',
-                fontSize: '15px',
-                fontWeight: '600',
-                border: 'none',
-                boxShadow: `0 10px 25px rgba(37, 99, 235, 0.3)`,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
+    // Use padding: 0 20px for mobile width, and max-width 1200px for desktop
+    <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: '-apple-system, sans-serif' }}>
+      
+      {/* HEADER & SUMMARY (MOBILE-FIRST) */}
+      <div style={{ background: COLORS.white, padding: '20px 0 0', borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 20px' }}>
+          
+          {/* TOP BAR: Month/Filter & Wallet/Profile Selector */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <button 
+              onClick={() => {/* Open Month Picker Modal */}}
+              style={headerTitleStyle}
             >
-              <Plus size={20} />
-              Create First Wallet
+              {getMonthName(selectedDate)}
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            
+            <button 
+               onClick={() => {/* Open Wallet/Profile Modal */}}
+               style={profileBtnStyle}>
+               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </button>
           </div>
-        )}
 
-        {currentWallet && (
+          {/* SUMMARY CARD (Gradient Style) */}
+          <div style={summaryCardStyle}>
+            <p style={summaryTextStyle}>Current Balance in {currentWallet ? currentWallet.name : 'Wallet'}</p>
+            <h2 style={{ fontSize: '32px', fontWeight: '800', margin: '8px 0 16px' }}>
+              RM {balance.toFixed(2)}
+            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
+              <div>
+                <p style={summaryTextStyle}>Total Income</p>
+                <p style={{ fontSize: '16px', fontWeight: '600', color: COLORS.successLight }}>
+                  +RM {totalIncome.toFixed(2)}
+                </p>
+              </div>
+              <div>
+                <p style={summaryTextStyle}>Total Expense</p>
+                <p style={{ fontSize: '16px', fontWeight: '600', color: COLORS.dangerLight }}>
+                  -RM {totalExpense.toFixed(2)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div style={{ maxWidth: '1200px', margin: '30px auto', padding: '0 20px' }}>
+        {currentWallet ? (
           <>
-            {/* Action Buttons */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-              gap: '12px',
-              marginBottom: '28px'
-            }}>
-              <button
-                onClick={() => setShowUploadModal(true)}
-                style={{
-                  background: SAPPHIRE_BLUE,
-                  color: 'white',
-                  padding: '12px 16px',
-                  borderRadius: '10px',
-                  fontWeight: '600',
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  fontSize: '14px',
-                  transition: 'all 0.2s',
-                  fontFamily: 'inherit'
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = DARK_NAVY)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = SAPPHIRE_BLUE)}
-              >
-                <FileUp size={18} />
-                Upload CSV
-              </button>
-              <button
-                onClick={() => {
-                  setEditingExpense(null)
-                  setNewExpense({
-                    item: '',
-                    price: '',
-                    store: '',
-                    date: new Date().toISOString().split('T')[0],
-                    icon: '🛒'
-                  })
-                  setShowAddExpense(true)
-                }}
-                style={{
-                  background: EMERALD_GREEN,
-                  color: 'white',
-                  padding: '12px 16px',
-                  borderRadius: '10px',
-                  fontWeight: '600',
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  fontSize: '14px',
-                  transition: 'all 0.2s',
-                  fontFamily: 'inherit'
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-              >
-                <Plus size={18} />
-                Add Expense
-              </button>
+            {/* CONTROLS (View Toggle is kept here) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ display: 'flex', background: COLORS.white, borderRadius: '8px', padding: '4px', border: `1px solid ${COLORS.border}` }}>
+                <ViewBtn icon={<List size={16}/>} active={viewType==='list'} onClick={()=>setViewType('list')} />
+                <ViewBtn icon={<LayoutGrid size={16}/>} active={viewType==='grid'} onClick={()=>setViewType('grid')} />
+              </div>
+              {/* ActionBtn removed, replaced by FAB */}
             </div>
 
-            {/* Filters */}
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', 
-              gap: '12px', 
-              marginBottom: '28px' 
-            }}>
-              <div style={{ position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: TEXT_MUTED, pointerEvents: 'none' }} />
-                <input
-                  placeholder="Search items..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  style={{ 
-                    width: '100%', 
-                    padding: '11px 12px 11px 40px', 
-                    borderRadius: '8px', 
-                    border: `1.5px solid ${BORDER_LIGHT}`, 
-                    fontSize: '14px',
-                    boxSizing: 'border-box',
-                    fontFamily: 'inherit'
-                  }}
-                />
+            {/* FILTERS (Responsive Layout) */}
+            <div style={filterGridStyle}>
+              {/* Search */}
+              <div style={{position:'relative'}}>
+                <Search size={18} style={{position:'absolute', left:14, top:12, color:COLORS.textGray}}/>
+                <input style={inputStyle} placeholder="Search item or store..." value={search} onChange={e=>setSearch(e.target.value)} />
               </div>
-              <div style={{ position: 'relative' }}>
-                <Calendar size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: TEXT_MUTED, pointerEvents: 'none' }} />
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={e => setSelectedDate(e.target.value)}
-                  style={{ 
-                    width: '100%', 
-                    padding: '11px 12px 11px 40px', 
-                    borderRadius: '8px', 
-                    border: `1.5px solid ${BORDER_LIGHT}`, 
-                    fontSize: '14px',
-                    boxSizing: 'border-box',
-                    fontFamily: 'inherit'
-                  }}
-                />
-              </div>
+              
+              {/* Category Filter */}
+              <select style={inputStyle} value={selectedCategory} onChange={e=>setSelectedCategory(e.target.value)}>
+                <option value="">All Categories</option>
+                {[...expenseIcons, ...incomeIcons].map(icon => (
+                  <option key={icon} value={icon}>{icon} {ICON_LABELS[icon]}</option>
+                ))}
+              </select>
+              
+              {/* Month Filter */}
+              <input type="month" style={inputStyle} value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} />
             </div>
 
-            {/* Total Card */}
-            {selectedDate && (
-              <div style={{
-                background: `linear-gradient(135deg, ${SAPPHIRE_BLUE}, ${SKY_BLUE})`,
-                color: 'white',
-                padding: '32px 24px',
-                borderRadius: '16px',
-                marginBottom: '28px',
-                boxShadow: `0 10px 30px rgba(37, 99, 235, 0.15)`,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div>
-                  <p style={{ fontSize: '13px', opacity: 0.9, marginBottom: '6px' }}>
-                    Total Spent
-                  </p>
-                  <p style={{ fontSize: '12px', opacity: 0.8, marginBottom: '8px' }}>
-                    {selectedDate}
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: '42px', fontWeight: '700', letterSpacing: '-0.5px' }}>
-                    RM {total}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Price Comparison */}
-            {search && Object.keys(grouped).length > 0 && (
-              <div style={{ display: 'grid', gap: '16px', marginBottom: '28px' }}>
-                {Object.entries(grouped)
-                  .filter(([item]) => item.toLowerCase().includes(search.toLowerCase()))
-                  .map(([item, list]) => (
-                    <div key={item} style={{ background: WHITE, borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
-                      <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px', color: TEXT_DARK }}>
-                        {item} <span style={{ color: TEXT_MUTED, fontWeight: '500' }}>({list.length})</span>
-                      </h3>
-                      <div style={{ display: 'grid', gap: '10px' }}>
-                        {list.sort((a, b) => a.price - b.price).map((e, i) => (
-                          <div key={i} style={{
-                            padding: '14px',
-                            borderRadius: '8px',
-                            background: i === 0 ? '#ECFDF5' : LIGHT_GRAY,
-                            border: i === 0 ? `1.5px solid ${EMERALD_GREEN}` : `1px solid ${BORDER_LIGHT}`,
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                          }}>
-                            <div>
-                              <p style={{ fontSize: '14px', fontWeight: i === 0 ? '600' : '500', color: i === 0 ? EMERALD_GREEN : TEXT_DARK }}>
-                                {e.store || 'Unknown Store'}
-                              </p>
-                              <p style={{ color: TEXT_MUTED, fontSize: '12px' }}>{e.date}</p>
+            {/* TRANSACTIONS */}
+            {transactions.length > 0 ? (
+              viewType === 'list' ? (
+                // List View (Table on Desktop, Collapsible List on Mobile)
+                <div style={{ background: COLORS.white, borderRadius: '12px', overflow: 'hidden' }}>
+                  {/* For mobile, hide the table headers and use flex/grid */}
+                  <table style={mobileTableStyle}>
+                    <thead style={tableHeaderStyle}>
+                      <tr>
+                        {['Date', 'Item', 'Store/Source', 'Amount', ''].map(h => 
+                          <th key={h} style={tableHeadCellStyle(h)}>{h}</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transactions.map(t => (
+                        <tr key={t.id} style={tableRowStyle}>
+                          <td style={tableCellDateStyle}>{formatDate(t.date)}</td>
+                          <td style={tableCellItemStyle}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <span style={{ fontSize: '24px' }}>{t.icon}</span>
+                              <div>
+                                <div style={{ fontWeight: '600' }}>{t.item}</div>
+                                <TypeBadge type={t.category_type} />
+                              </div>
                             </div>
-                            <p style={{ fontSize: '18px', fontWeight: '700', color: i === 0 ? EMERALD_GREEN : TEXT_DARK }}>
-                              RM {e.price.toFixed(2)}
-                            </p>
-                          </div>
-                        ))}
+                          </td>
+                          <td style={tableCellDetailStyle}>{t.store || '-'}</td>
+                          <td style={tableCellAmountStyle(t.category_type)}>
+                            {t.category_type === 'income' ? '+' : '-'} RM {t.price.toFixed(2)}
+                          </td>
+                          <td style={tableCellActionsStyle}>
+                            <button onClick={()=>handleEdit(t)} style={actionBtnStyle}><Edit2 size={14}/></button>
+                            <button onClick={()=>handleDelete(t.id)} style={{...actionBtnStyle, background: COLORS.dangerLight, color: COLORS.danger}}><Trash2 size={14}/></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                // Grid View
+                <div style={gridContainerStyle}>
+                  {transactions.map(t => (
+                    <div key={t.id} style={gridCardStyle}>
+                      <div style={gridActionsStyle}>
+                        <button onClick={()=>handleEdit(t)} style={iconBtnStyle}><Edit2 size={14}/></button>
+                        <button onClick={()=>handleDelete(t.id)} style={{...iconBtnStyle, color:COLORS.danger, background: COLORS.dangerLight}}><Trash2 size={14}/></button>
+                      </div>
+                      <div style={{ fontSize: '32px', marginBottom: '16px' }}>{t.icon}</div>
+                      <h3 style={{ fontWeight: '700', marginBottom: '4px' }}>{t.item}</h3>
+                      <p style={{ fontSize: '13px', color: COLORS.textGray, marginBottom: '16px' }}>{t.store || '—'}</p>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: COLORS.textGray }}>{formatDate(t.date)}</span>
+                        <span style={{ fontSize: '18px', fontWeight: '700', color: t.category_type==='income' ? COLORS.success : COLORS.danger }}>
+                          {t.category_type === 'income' ? '+' : '-'} RM {t.price.toFixed(2)}
+                        </span>
                       </div>
                     </div>
                   ))}
-              </div>
-            )}
-
-            {/* Expenses Grid */}
-            {!search && expenses.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
-                {expenses.slice(0, 24).map(e => (
-                  <div key={e.id} style={{
-                    background: WHITE,
-                    borderRadius: '12px',
-                    padding: '20px',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-                    border: `1px solid ${BORDER_LIGHT}`,
-                    position: 'relative',
-                    transition: 'all 0.2s'
-                  }}>
-                    {/* Action Buttons */}
-                    <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '6px' }}>
-                      <button
-                        onClick={() => handleEditExpense(e)}
-                        style={{
-                          background: SAPPHIRE_BLUE,
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          padding: '6px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          fontFamily: 'inherit'
-                        }}
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteExpense(e.id)}
-                        style={{
-                          background: RED_DANGER,
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          padding: '6px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          fontFamily: 'inherit'
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-
-                    <p style={{ fontSize: '40px', marginBottom: '12px', marginTop: '12px' }}>
-                      {e.icon || '🛒'}
-                    </p>
-                    <p style={{ fontSize: '16px', fontWeight: '700', marginBottom: '6px', color: TEXT_DARK }}>
-                      {e.item}
-                    </p>
-                    <p style={{ color: TEXT_MUTED, marginBottom: '12px', fontSize: '13px' }}>
-                      {e.store || 'Unknown'}
-                    </p>
-                    <p style={{ fontSize: '24px', fontWeight: '700', color: SAPPHIRE_BLUE, marginBottom: '8px' }}>
-                      RM {e.price.toFixed(2)}
-                    </p>
-                    <p style={{ fontSize: '12px', color: TEXT_MUTED }}>
-                      {e.date}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Empty State */}
-            {currentWallet && expenses.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '60px 20px', background: WHITE, borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
-                <TrendingUp size={48} color={TEXT_MUTED} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
-                <p style={{ fontSize: '18px', fontWeight: '600', color: TEXT_DARK, marginBottom: '8px' }}>
-                  No expenses yet
-                </p>
-                <p style={{ color: TEXT_MUTED, fontSize: '14px' }}>
-                  Start by uploading a CSV or adding your first expense
-                </p>
+                </div>
+              )
+            ) : (
+              <div style={emptyStateStyle}>
+                <TrendingUp size={48} color={COLORS.textGray} style={{ opacity: 0.3, marginBottom: 16 }} />
+                <p style={{ color: COLORS.textGray }}>No transactions found for the current filter.</p>
               </div>
             )}
           </>
-        )}
-
-        {wallets.length > 0 && !currentWallet && (
-          <div style={{ textAlign: 'center', padding: '60px 20px', background: WHITE, borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: `1px solid ${BORDER_LIGHT}` }}>
-            <WalletCards size={48} color={TEXT_MUTED} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
-            <p style={{ fontSize: '18px', fontWeight: '600', color: TEXT_DARK }}>
-              Select a wallet from the top menu
-            </p>
-          </div>
-        )}
+        ) : <p style={{textAlign:'center', marginTop: 50}}>Loading Wallet...</p>}
       </div>
 
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 999,
-          padding: '16px'
-        }} onClick={() => setShowUploadModal(false)}>
-          <div style={{
-            background: WHITE,
-            borderRadius: '16px',
-            padding: '32px',
-            width: '100%',
-            maxWidth: '500px',
-            boxShadow: '0 25px 50px rgba(0,0,0,0.15)'
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT_DARK, margin: 0 }}>
-                Upload CSV File
-              </h2>
-              <button onClick={() => setShowUploadModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '24px', color: TEXT_MUTED, padding: 0 }}>
-                ×
-              </button>
-            </div>
-            {/* DOWNLOAD SAMPLE CSV BUTTON - ADD THIS */}
-            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-              <p style={{ fontSize: '13px', color: TEXT_MUTED, marginBottom: '12px' }}>
-                Not sure how to format your file?
-              </p>
-              <button
-                onClick={() => {
-                  const csvContent = `date,item,price,store,category
-                        2025-04-01,Starbucks Coffee,12.50,Starbucks,beverages
-                        2025-04-02,Grab Ride to Office,18.00,Grab,transport
-                        2025-04-03,Chicken Rice Lunch,8.50,Hawker Centre,food
-                        2025-04-04,Netflix Subscription,49.00,,entertainment`;
-
-                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                  const link = document.createElement('a');
-                  const url = URL.createObjectURL(blob);
-                  link.setAttribute('href', url);
-                  link.setAttribute('download', 'expense-tracker-sample.csv');
-                  link.style.visibility = 'hidden';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                style={{
-                  background: 'transparent',
-                  color: SAPPHIRE_BLUE,
-                  border: `2px dashed ${SAPPHIRE_BLUE}`,
-                  padding: '10px 20px',
-                  borderRadius: '10px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  transition: 'all 0.2s',
-                  fontFamily: 'inherit'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = SAPPHIRE_LIGHT;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <FileUp size={18} />
-                Download Sample CSV
-              </button>
-            </div>
-
-            <div
-              style={{
-                border: `2px dashed ${SAPPHIRE_BLUE}`,
-                borderRadius: '12px',
-                padding: '40px 20px',
-                textAlign: 'center',
-                background: SAPPHIRE_LIGHT,
-                cursor: 'pointer',
-                marginBottom: '24px',
-                transition: 'all 0.2s'
+      {/* FLOATING ACTION BUTTON */}
+      {currentWallet && (
+          <button
+              style={fabStyle}
+              onClick={() => {
+                  setEditingItem(null);
+                  setEntryType('expense');
+                  setNewEntry({
+                      item: '', price: '', store: '',
+                      date: new Date().toISOString().split('T')[0],
+                      icon: '🛍️'
+                  }); 
+                  setShowAddModal(true);
               }}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <FileUp size={40} color={SAPPHIRE_BLUE} style={{ margin: '0 auto 12px' }} />
-              <p style={{ fontSize: '16px', fontWeight: '600', color: TEXT_DARK, marginBottom: '4px' }}>
-                Choose a file
-              </p>
-              <p style={{ color: TEXT_MUTED, fontSize: '13px' }}>
-                or drag and drop
-              </p>
-              {file && (
-                <p style={{ marginTop: '12px', color: EMERALD_GREEN, fontWeight: '600', fontSize: '13px' }}>
-                  ✓ {file.name}
-                </p>
-              )}
+              title="Add New Transaction"
+          >
+              <Plus size={28} />
+          </button>
+      )}
+
+      {/* ADD/EDIT MODAL - The modal uses fixed position so it should always work well on mobile */}
+      {showAddModal && (
+        <div style={modalOverlayStyle} onClick={() => setShowAddModal(false)}>
+          <div style={modalBoxStyle} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '24px', color: COLORS.textDark }}>
+              {editingItem ? 'Edit' : 'Add'} Entry
+            </h2>
+
+            <div style={{ display: 'flex', background: COLORS.bg, padding: 6, borderRadius: 12, marginBottom: 24, width: 'fit-content' }}>
+              <TabBtn label="Expense" active={entryType==='expense'} color={COLORS.danger} 
+                onClick={() => { setEntryType('expense'); setNewEntry({...newEntry, icon: '🛍️'}) }} />
+              <TabBtn label="Income" active={entryType==='income'} color={COLORS.success} 
+                onClick={() => { setEntryType('income'); setNewEntry({...newEntry, icon: '💵'}) }} />
             </div>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv"
-              onChange={e => setFile(e.target.files[0])}
-              style={{ display: 'none' }}
-            />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24, padding: '0 10px', overflowX: 'auto' }}>
+              {(entryType === 'expense' ? expenseIcons : incomeIcons).map(icon => (
+                <button
+                  key={icon}
+                  onClick={() => setNewEntry({...newEntry, icon})}
+                  style={{
+                    fontSize: '20px',
+                    borderRadius: '12px',
+                    width:'50px',
+                    minWidth: '50px',
+                    height:'50px',
+                    background: newEntry.icon === icon 
+                      ? (entryType === 'income' ? COLORS.successLight : COLORS.dangerLight) 
+                      : COLORS.white,
+                    border: newEntry.icon === icon 
+                      ? `3px solid ${entryType === 'income' ? COLORS.success : COLORS.danger}` 
+                      : `2px solid ${COLORS.border}`,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    boxShadow: newEntry.icon === icon ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
 
-            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
-              <button
-                onClick={handleUpload}
-                disabled={uploading || !file}
-                style={{
-                  padding: '12px',
-                  background: uploading || !file ? TEXT_MUTED : SAPPHIRE_BLUE,
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '15px',
-                  fontWeight: '700',
-                  cursor: uploading || !file ? 'not-allowed' : 'pointer',
-                  fontFamily: 'inherit'
-                }}
-              >
-                {uploading ? 'Uploading...' : 'Upload'}
+            <input placeholder="Item" value={newEntry.item} onChange={e=>setNewEntry({...newEntry, item:e.target.value})} style={modalInputStyle} />
+            <input type="number" placeholder="Amount" value={newEntry.price} onChange={e=>setNewEntry({...newEntry, price:e.target.value})} style={modalInputStyle} />
+            <input placeholder={entryType==='income'?"Source":"Store"} value={newEntry.store} onChange={e=>setNewEntry({...newEntry, store:e.target.value})} style={modalInputStyle} />
+            <input type="date" value={newEntry.date} onChange={e=>setNewEntry({...newEntry, date:e.target.value})} style={{...modalInputStyle, marginBottom: 24}} />
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={handleSaveEntry} style={{...primaryBtnStyle, background: entryType==='income'?COLORS.success:COLORS.danger}}>
+                Save
               </button>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                style={{
-                  padding: '12px',
-                  background: LIGHT_GRAY,
-                  color: TEXT_DARK,
-                  border: `1px solid ${BORDER_LIGHT}`,
-                  borderRadius: '8px',
-                  fontSize: '15px',
-                  fontWeight: '700',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit'
-                }}
-              >
-                Cancel
-              </button>
+              <button onClick={()=>setShowAddModal(false)} style={cancelBtnStyle}>Cancel</button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Add/Edit Expense Modal */}
-      {showAddExpense && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 999
-        }} onClick={() => setShowAddExpense(false)}>
-          <div style={{
-            background: WHITE,
-            borderRadius: '16px',
-            padding: '28px',
-            width: '100%',
-            maxWidth: '580px',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.15)'
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT_DARK, margin: 0 }}>
-                {editingExpense ? 'Edit Expense' : 'Add Expense'}
-              </h2>
-              <button onClick={() => setShowAddExpense(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '28px', color: TEXT_MUTED, padding: 0 }}>
-                ×
-              </button>
-            </div>
-
-            {/* Icon Selector */}
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: TEXT_MUTED, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Category
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(45px, 1fr))', gap: '10px' }}>
-                {expenseIcons.map(icon => (
-                  <button
-                    key={icon}
-                    onClick={() => setNewExpense({ ...newExpense, icon })}
-                    style={{
-                      fontSize: '28px',
-                      borderRadius: '8px',
-                      border: newExpense.icon === icon ? `2px solid ${SAPPHIRE_BLUE}` : `2px solid ${BORDER_LIGHT}`,
-                      background: newExpense.icon === icon ? SAPPHIRE_LIGHT : LIGHT_GRAY,
-                      cursor: 'pointer',
-                      transition: '0.2s',
-                      fontFamily: 'inherit'
-                    }}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <input
-              value={newExpense.item}
-              onChange={e => setNewExpense({ ...newExpense, item: e.target.value })}
-              placeholder="Item description"
-              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-            />
-
-            <input
-              type="number"
-              value={newExpense.price}
-              onChange={e => setNewExpense({ ...newExpense, price: e.target.value })}
-              placeholder="Amount (RM)"
-              step="0.01"
-              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-            />
-
-            <input
-              value={newExpense.store}
-              onChange={e => setNewExpense({ ...newExpense, store: e.target.value })}
-              placeholder="Store (optional)"
-              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-            />
-
-            <input
-              type="date"
-              value={newExpense.date}
-              onChange={e => setNewExpense({ ...newExpense, date: e.target.value })}
-              style={{ width: '100%', padding: '11px 12px', borderRadius: '8px', border: `1.5px solid ${BORDER_LIGHT}`, fontSize: '14px', marginBottom: '24px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-            />
-
-            <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
-              <button onClick={handleAddExpense} style={{ padding: '12px', background: SAPPHIRE_BLUE, color: WHITE, border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-                {editingExpense ? 'Update' : 'Add'}
-              </button>
-              <button onClick={() => setShowAddExpense(false)} style={{ padding: '12px', background: LIGHT_GRAY, color: TEXT_DARK, border: `1px solid ${BORDER_LIGHT}`, borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-      `}</style>
     </div>
   )
 }
+
+// COMPONENTS & STYLES
+const StatBox = ({ label, amount, color }) => (
+  <div style={{ textAlign: 'center' }}>
+    <p style={{ fontSize: '13px', color: COLORS.textGray, marginBottom: 4, textTransform: 'uppercase' }}>{label}</p>
+    <p style={{ fontSize: '28px', fontWeight: '700', color }}>RM {Math.abs(amount).toFixed(2)}</p>
+  </div>
+)
+
+const ViewBtn = ({ icon, active, onClick }) => (
+  <button onClick={onClick} style={{ padding: '8px 16px', borderRadius: 6, background: active ? COLORS.bg : 'transparent', boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', border: 'none', cursor: 'pointer' }}>
+    {icon}
+  </button>
+)
+
+const TypeBadge = ({ type }) => (
+  <span style={{
+    fontSize: 10, padding: '2px 8px', borderRadius: 4,
+    background: type==='income' ? COLORS.successLight : COLORS.dangerLight,
+    color: type==='income' ? COLORS.success : COLORS.danger,
+    fontWeight: 700, textTransform: 'uppercase'
+  }}>
+    {type === 'income' ? 'IN' : 'OUT'}
+  </span>
+)
+
+const TabBtn = ({ label, active, color, onClick }) => (
+  <button onClick={onClick} style={{ flex: 1, padding: 10, borderRadius: 6, background: active ? COLORS.white : 'transparent', color: active ? color : COLORS.textGray, fontWeight: 600, boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', border: 'none' }}>
+    {label}
+  </button>
+)
+
+// --- NEW/MODIFIED STYLES FOR MOBILE UI ---
+const summaryCardStyle = {
+    background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.success} 100%)`, 
+    borderRadius: '16px',
+    padding: '24px',
+    color: COLORS.white,
+    boxShadow: '0 10px 20px rgba(0, 0, 0, 0.2)',
+    marginBottom: '24px',
+};
+const summaryTextStyle = { 
+    fontSize: '13px', 
+    fontWeight: '500', 
+    opacity: 0.8 
+};
+const headerTitleStyle = {
+    fontSize: '18px', 
+    fontWeight: '700', 
+    color: COLORS.textDark, 
+    background: 'none', 
+    border: 'none', 
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+};
+const profileBtnStyle = {
+    width: 36, height: 36, 
+    borderRadius: '50%', 
+    background: COLORS.bg, 
+    border: `1px solid ${COLORS.border}`, 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'center',
+    cursor: 'pointer'
+};
+const fabStyle = {
+    position: 'fixed',
+    bottom: '24px',
+    right: '24px',
+    width: '56px',
+    height: '56px',
+    borderRadius: '50%',
+    backgroundColor: COLORS.primary,
+    color: COLORS.white,
+    boxShadow: '0 8px 16px rgba(0, 0, 0, 0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: 'none',
+    cursor: 'pointer',
+    zIndex: 900
+};
+
+// Filter Grid Style (changes based on screen size, though inline styles are tricky)
+const filterGridStyle = { 
+    display: 'grid', 
+    gridTemplateColumns: '1fr', // Mobile: Stacked columns
+    gap: '12px', 
+    marginBottom: '24px',
+    '@media (min-width: 768px)': { // Desktop/Tablet overrides
+        gridTemplateColumns: '3fr 1fr 1fr',
+        gap: '16px',
+    }
+};
+
+const inputStyle = { width: '100%', padding: '12px 12px 12px 44px', borderRadius: 10, border: `1px solid ${COLORS.border}`, fontSize: 14, outline: 'none', WebkitAppearance: 'none' }
+const modalInputStyle = { width: '100%', padding: 12, marginBottom: 12, borderRadius: 8, border: `1px solid ${COLORS.border}` }
+const actionBtnStyle = { background: COLORS.primary, color: COLORS.white, border: 'none', borderRadius: 6, padding: '6px 12px', marginLeft: 8 }
+const iconBtnStyle = { border: 'none', padding: 8, borderRadius: 6, background: COLORS.bg, cursor: 'pointer' }
+const modalOverlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }
+const modalBoxStyle = { background: COLORS.white, padding: 32, borderRadius: 16, width: '90%', maxWidth: 450, boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }
+const primaryBtnStyle = { flex: 1, padding: 14, color: 'white', border: 'none', borderRadius: 8, fontWeight: 600 }
+const cancelBtnStyle = { flex: 1, padding: 14, background: COLORS.bg, color: COLORS.textDark, border: 'none', borderRadius: 8, fontWeight: 600 }
+const emptyStateStyle = { textAlign: 'center', padding: '80px 20px', background: COLORS.white, borderRadius: '12px' }
+
+// Transaction Styles (Simplified for mobile list view)
+const mobileTableStyle = { width: '100%', borderCollapse: 'collapse', '@media (max-width: 767px)': { display: 'block' } };
+const tableHeaderStyle = { background: '#FAFAFA', '@media (max-width: 767px)': { display: 'none' } }; // Hide headers on mobile
+const tableRowStyle = { borderBottom: `1px solid ${COLORS.border}` };
+const tableHeadCellStyle = (h) => ({ padding: '16px 24px', fontSize: '13px', textAlign: h==='Amount'?'right':'left', color: COLORS.textDark });
+const tableCellDateStyle = { padding: '16px 24px', color: COLORS.textGray };
+const tableCellItemStyle = { padding: '16px 24px' };
+const tableCellDetailStyle = { padding: '16px 24px', color: COLORS.textGray };
+const tableCellAmountStyle = (type) => ({ padding: '16px 24px', textAlign: 'right', fontWeight: '700', color: type==='income' ? COLORS.success : COLORS.danger });
+const tableCellActionsStyle = { padding: '16px 24px', textAlign: 'right' };
+
+const gridContainerStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' };
+const gridCardStyle = { background: COLORS.white, padding: '24px', borderRadius: '12px', border: `1px solid ${COLORS.border}`, position: 'relative' };
+const gridActionsStyle = { position: 'absolute', top: 16, right: 16, display: 'flex', gap: 8 };
