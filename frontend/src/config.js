@@ -1,1 +1,1 @@
-export const API_URL = 'http://localhost:5000'   // change to Render URL later
+export const API_URL = 'http://192.168.0.213:5000'   // change to Render URL later

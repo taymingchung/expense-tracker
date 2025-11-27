@@ -423,49 +423,99 @@ export default function Dashboard() {
 
         {/* Add/Edit Modal */}
         {showAddModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowAddModal(false)}>
-            <div className="bg-white rounded-3xl p-8 max-w-md w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">{editingItem ? 'Edit' : 'Add'} Transaction</h2>
+  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddModal(false)}>
+    <div 
+      className="bg-white rounded-[32px] p-6 md:p-8 w-[95%] max-w-md max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95 duration-200 no-scrollbar" 
+      onClick={e => e.stopPropagation()}
+    >
+      <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">{editingItem ? 'Edit' : 'Add'} Transaction</h2>
 
-              {/* Type Tabs */}
-              <div className="flex bg-gray-100 p-1 rounded-xl mb-6">
-                <button onClick={() => { setEntryType('expense'); setNewEntry({...newEntry, icon: 'Shopping'}) }} className={`flex-1 py-3 rounded-lg font-semibold transition ${entryType === 'expense' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-600'}`}>
-                  Expense
-                </button>
-                <button onClick={() => { setEntryType('income'); setNewEntry({...newEntry, icon: 'Salary'}) }} className={`flex-1 py-3 rounded-lg font-semibold transition ${entryType === 'income' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600'}`}>
-                  Income
-                </button>
-              </div>
+      {/* Type Tabs */}
+      <div className="flex bg-gray-100 p-1.5 rounded-2xl mb-8">
+        <button 
+          onClick={() => { setEntryType('expense'); setNewEntry({...newEntry, icon: 'Shopping'}) }} 
+          className={`flex-1 py-3.5 rounded-xl text-sm font-bold transition-all duration-200 ${entryType === 'expense' ? 'bg-white text-red-600 shadow-sm scale-[1.02]' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          Expense
+        </button>
+        <button 
+          onClick={() => { setEntryType('income'); setNewEntry({...newEntry, icon: 'Salary'}) }} 
+          className={`flex-1 py-3.5 rounded-xl text-sm font-bold transition-all duration-200 ${entryType === 'income' ? 'bg-white text-emerald-600 shadow-sm scale-[1.02]' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          Income
+        </button>
+      </div>
 
-              {/* Icons */}
-              <div className="grid grid-cols-6 gap-3 mb-6">
-                {(entryType === 'expense' ? expenseIcons : incomeIcons).map(icon => (
-                  <button
-                    key={icon}
-                    onClick={() => setNewEntry({...newEntry, icon})}
-                    className={`text-2xl py-3 rounded-xl border-2 transition ${newEntry.icon === icon ? (entryType === 'income' ? 'border-emerald-500 bg-emerald-50' : 'border-red-500 bg-red-50') : 'border-gray-200 hover:bg-gray-50'}`}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
+      {/* Icons Grid */}
+      <div className="grid grid-cols-5 gap-3 mb-8">
+        {(entryType === 'expense' ? expenseIcons : incomeIcons).map(icon => (
+          <button
+            key={icon}
+            onClick={() => setNewEntry({...newEntry, icon})}
+            className={`
+              aspect-square flex items-center justify-center text-3xl rounded-2xl border-2 transition-all duration-200
+              ${newEntry.icon === icon 
+                ? (entryType === 'income' ? 'border-emerald-500 bg-emerald-50 scale-110 shadow-md' : 'border-red-500 bg-red-50 scale-110 shadow-md') 
+                : 'border-transparent bg-gray-50 hover:bg-gray-100 text-gray-400 grayscale hover:grayscale-0'}
+            `}
+          >
+            {icon}
+          </button>
+        ))}
+      </div>
 
-              <input placeholder="Item name" value={newEntry.item} onChange={e => setNewEntry({...newEntry, item: e.target.value})} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-              <input type="number" placeholder="Amount (RM)" value={newEntry.price} onChange={e => setNewEntry({...newEntry, price: e.target.value})} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-              <input placeholder={entryType === 'income' ? 'Source' : 'Store / Location'} value={newEntry.store} onChange={e => setNewEntry({...newEntry, store: e.target.value})} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-              <input type="date" value={newEntry.date} onChange={e => setNewEntry({...newEntry, date: e.target.value})} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+      {/* Inputs */}
+      <div className="space-y-4 mb-8">
+        <input 
+          placeholder="Item name" 
+          value={newEntry.item} 
+          onChange={e => setNewEntry({...newEntry, item: e.target.value})} 
+          className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-lg font-medium focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-gray-400" 
+        />
+        <input 
+          type="number" 
+          placeholder="Amount (RM)" 
+          value={newEntry.price} 
+          onChange={e => setNewEntry({...newEntry, price: e.target.value})} 
+          className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-lg font-medium focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-gray-400" 
+        />
+        <input 
+          placeholder={entryType === 'income' ? 'Source' : 'Store / Location'} 
+          value={newEntry.store} 
+          onChange={e => setNewEntry({...newEntry, store: e.target.value})} 
+          className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-lg font-medium focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-gray-400" 
+        />
+        <div className="relative">
+          <input 
+            type="date" 
+            value={newEntry.date} 
+            onChange={e => setNewEntry({...newEntry, date: e.target.value})} 
+            className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-lg font-medium focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all text-gray-600" 
+          />
+        </div>
+      </div>
 
-              <div className="flex gap-3">
-                <button onClick={handleSaveEntry} className={`flex-1 py-4 rounded-xl font-bold text-white transition ${entryType === 'income' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                  Save
-                </button>
-                <button onClick={() => setShowAddModal(false)} className="flex-1 py-4 bg-gray-100 rounded-xl font-bold text-gray-800 hover:bg-gray-200 transition">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      {/* Actions */}
+      <div className="flex gap-3 pt-2">
+        <button 
+          onClick={() => setShowAddModal(false)} 
+          className="flex-1 py-4 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition active:scale-95"
+        >
+          Cancel
+        </button>
+        <button 
+          onClick={handleSaveEntry} 
+          className={`
+            flex-1 py-4 text-white font-bold rounded-2xl shadow-lg transition transform active:scale-95
+            ${entryType === 'income' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/30' : 'bg-red-600 hover:bg-red-700 shadow-red-500/30'}
+          `}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
         {/* DELETE CONFIRMATION MODAL */}
         {showDeleteModal && (
