@@ -241,25 +241,90 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // ADMIN (Updated)
 // ========================================================
 
+app.get('/admin/users', async (req, res) => {
+  try {
+    const user = await getUser(req);
+
+    const { data: profile } = await adminClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', user.id)
+      .single();
+
+    if (!profile?.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { data: authUsers } = await adminClient.auth.admin.listUsers();
+    const userIds = authUsers.users.map(u => u.id);
+
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, full_name, is_blocked, is_admin')
+      .in('id', userIds);
+
+    const enriched = authUsers.users.map(u => {
+      const p = profiles?.find(x => x.id === u.id) || {};
+      return {
+        id: u.id,
+        email: u.email,
+        full_name: p.full_name || null,
+        is_blocked: p.is_blocked || false,
+        is_admin: p.is_admin || false,
+        created_at: u.created_at,
+      };
+    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    res.json(enriched);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/admin/action', async (req, res) => {
   try {
     const user = await getUser(req);
     const { user_id, action } = req.body;
-    
-    const { data: admin } = await adminClient.from('profiles').select('is_admin').eq('id', user.id).single();
-    if (!admin?.is_admin) return res.status(403).json({ error: 'Forbidden' });
 
-    if (action === 'delete') {
-       await adminClient.auth.admin.deleteUser(user_id);
-       // UPDATED TABLE NAME HERE
-       await supabase.from('transactions').delete().eq('user_id', user_id); 
-       await supabase.from('wallet_members').delete().eq('user_id', user_id);
-       await supabase.from('wallets').delete().eq('owner_id', user_id);
-       await supabase.from('profiles').delete().eq('id', user_id);
-    } 
-    // ... block/unblock logic (unchanged) ...
+    const { data: adminProfile } = await adminClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', user.id)
+      .single();
+
+    if (!adminProfile?.is_admin) {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+
+    switch (action) {
+      case 'block':
+      case 'unblock':
+        await adminClient.from('profiles').update({ is_blocked: action === 'block' }).eq('id', user_id);
+        break;
+
+      case 'make_admin':
+      case 'remove_admin':
+        await adminClient.from('profiles').update({ is_admin: action === 'make_admin' }).eq('id', user_id);
+        break;
+
+      case 'delete':
+        await adminClient.auth.admin.deleteUser(user_id);
+        await adminClient.from('transactions').delete().eq('user_id', user_id);
+        await adminClient.from('wallet_members').delete().eq('user_id', user_id);
+        await adminClient.from('wallets').delete().eq('owner_id', user_id);
+        await adminClient.from('profiles').delete().eq('id', user_id);
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.listen(5000, '0.0.0.0', () => console.log('Backend on 5000'));

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { API_URL } from '../config'
-import { 
-  Trash2, UserX, UserCheck, RefreshCw, Mail, User, Clock, 
-  Shield, KeyRound, Search, ChevronLeft, ChevronRight 
+import {
+  Trash2, UserX, UserCheck, RefreshCw, Mail, User, Clock,
+  Shield, KeyRound, Search, ChevronLeft, ChevronRight
 } from 'lucide-react'
 
 export default function Admin() {
@@ -35,22 +35,21 @@ export default function Admin() {
     const msgs = {
       block: 'Block user?',
       unblock: 'Unblock user?',
-      delete: 'Delete permanently? All data lost.',
-      make_admin: 'Make admin?',
-      remove_admin: 'Remove admin?',
+      delete: 'Delete permanently? All data will be lost.',
+      make_admin: 'Make this user an admin?',
+      remove_admin: 'Remove admin rights?',
       reset_password: 'Send password reset email?'
     }
     if (!confirm(msgs[action])) return
 
     setActionLoading(p => ({ ...p, [userId]: true }))
-
     try {
       const { data: { session } } = await supabase.auth.getSession()
 
       if (action === 'reset_password') {
         const email = users.find(u => u.id === userId)?.email
         await supabase.auth.admin.generateLink({ type: 'recovery', email })
-        alert('Reset email sent!')
+        alert('Password reset email sent!')
       } else {
         const res = await fetch(`${API_URL}/admin/action`, {
           method: 'POST',
@@ -60,7 +59,7 @@ export default function Admin() {
           },
           body: JSON.stringify({ user_id: userId, action })
         })
-        if (!res.ok) throw new Error('Failed')
+        if (!res.ok) throw new Error('Action failed')
 
         setUsers(prev => prev.map(u => {
           if (u.id === userId) {
@@ -91,253 +90,119 @@ export default function Admin() {
   const totalPages = Math.ceil(filtered.length / usersPerPage)
   const paginated = filtered.slice((currentPage - 1) * usersPerPage, currentPage * usersPerPage)
 
-  if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px' }}>
-      <RefreshCw size={40} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
-      <p style={{ fontSize: '18px', color: '#64748b' }}>Loading users...</p>
-    </div>
-  )
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-6 bg-gray-50">
+        <RefreshCw className="w-12 h-12 text-blue-600 animate-spin" />
+        <p className="text-xl text-gray-600">Loading users...</p>
+      </div>
+    )
+  }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '40px 16px' }}>
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-
+    <div className="min-h-screen bg-gray-50 py-10 px-4">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div style={{ marginBottom: '40px' }}>
-          <h1 style={{ fontSize: '36px', fontWeight: '800', color: '#0f172a', marginBottom: '24px' }}>
-            Admin Panel
-          </h1>
+        <div className="mb-12">
+          <h1 className="text-4xl font-extrabold text-gray-900 mb-8">Admin Panel</h1>
 
           {/* Search */}
-          <div style={{ position: 'relative', maxWidth: '500px', marginBottom: '32px' }}>
-            <Search size={20} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+          <div className="relative max-w-xl">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
               placeholder="Search by email or name..."
               value={searchTerm}
               onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1) }}
-              style={{
-                width: '100%',
-                padding: '14px 20px 14px 52px',
-                borderRadius: '16px',
-                border: '2px solid #e2e8f0',
-                background: 'white',
-                fontSize: '16px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-                outline: 'none'
-              }}
-              onFocus={e => e.target.style.borderColor = '#2563eb'}
-              onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+              className="w-full pl-14 pr-6 py-4 bg-white border-2 border-gray-200 rounded-2xl text-lg shadow-lg focus:outline-none focus:border-blue-600 transition"
             />
           </div>
         </div>
 
         {/* Table Card */}
-        <div style={{
-          background: 'white',
-          borderRadius: '24px',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.08)',
-          overflow: 'hidden'
-        }}>
+        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
           {/* Top Bar */}
-          <div style={{
-            padding: '24px',
-            borderBottom: '1px solid #e2e8f0',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <p style={{ fontSize: '15px', color: '#64748b', fontWeight: '500' }}>
+          <div className="flex items-center justify-between px-8 py-6 border-b border-gray-200 bg-gray-50">
+            <p className="text-gray-600 font-medium">
               Showing {paginated.length} of {filtered.length} users
             </p>
             <button
               onClick={fetchUsers}
-              style={{
-                padding: '12px 28px',
-                background: '#2563eb',
-                color: 'white',
-                border: 'none',
-                borderRadius: '16px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                boxShadow: '0 4px 12px rgba(37,99,235,0.3)'
-              }}
+              className="flex items-center gap-3 px-8 py-4 bg-blue-600 text-white font-semibold rounded-2xl hover:bg-blue-700 hover:shadow-lg transition"
             >
-              <RefreshCw size={18} />
+              <RefreshCw className="w-5 h-5" />
               Refresh
             </button>
           </div>
 
           {/* Table */}
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="overflow-x-auto">
+            <table className="w-full">
               <thead>
-                <tr style={{ background: '#f8fafc' }}>
-                  <th style={{ padding: '20px', textAlign: 'left', fontWeight: '700', color: '#334155', fontSize: '14px' }}>USER</th>
-                  <th style={{ padding: '20px', textAlign: 'left', fontWeight: '700', color: '#334155', fontSize: '14px' }}>NAME</th>
-                  <th style={{ padding: '20px', textAlign: 'left', fontWeight: '700', color: '#334155', fontSize: '14px' }}>STATUS</th>
-                  <th style={{ padding: '20px', textAlign: 'left', fontWeight: '700', color: '#334155', fontSize: '14px' }}>ROLE</th>
-                  <th style={{ padding: '20px', textAlign: 'left', fontWeight: '700', color: '#334155', fontSize: '14px' }}>JOINED</th>
-                  <th style={{ padding: '20px', textAlign: 'center', fontWeight: '700', color: '#334155', fontSize: '14px' }}>ACTIONS</th>
+                <tr className="bg-gray-50 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">
+                  <th className="px-8 py-6">User</th>
+                  <th className="px-8 py-6">Name</th>
+                  <th className="px-8 py-6">Status</th>
+                  <th className="px-8 py-6">Role</th>
+                  <th className="px-8 py-6">Joined</th>
+                  <th className="px-8 py-6 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-200">
                 {paginated.map(u => (
-                  <tr key={u.id} style={{
-                    borderBottom: '1px solid #f1f5f9',
-                    background: 'white',
-                    transition: 'background 0.2s'
-                  }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'white'}
-                  >
-                    <td style={{ padding: '24px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <Mail size={20} style={{ color: '#64748b' }} />
-                        <span style={{ fontWeight: '600', color: '#1e293b' }}>{u.email}</span>
+                  <tr key={u.id} className="hover:bg-gray-50 transition">
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-4">
+                        <Mail className="w-5 h-5 text-gray-500" />
+                        <span className="font-semibold text-gray-900">{u.email}</span>
                       </div>
                     </td>
-                    <td style={{ padding: '24px 20px', color: '#475569' }}>
+                    <td className="px-8 py-6 text-gray-600">
                       {u.full_name || '—'}
                     </td>
-                    <td style={{ padding: '24px 20px' }}>
-                      <span style={{
-                        padding: '10px 20px',
-                        borderRadius: '999px',
-                        fontSize: '13px',
-                        fontWeight: '600',
-                        background: u.is_blocked ? '#fee2e2' : '#ecfdf5',
-                        color: u.is_blocked ? '#dc2626' : '#16a34a',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        {u.is_blocked ? <UserX size={16} /> : <UserCheck size={16} />}
+                    <td className="px-8 py-6">
+                      <span className={`inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-semibold ${u.is_blocked ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {u.is_blocked ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
                         {u.is_blocked ? 'Blocked' : 'Active'}
                       </span>
                     </td>
-                    <td style={{ padding: '24px 20px' }}>
-                      {u.is_admin ? (
-                        <span style={{
-                          padding: '10px 20px',
-                          background: '#fef3c7',
-                          color: '#f59e0b',
-                          borderRadius: '999px',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          minWidth: '110px' 
-                        }}>
-                          <Shield size={16} />
-                          Admin
-                        </span>
-                      ) : (
-                        <span style={{
-                          padding: '10px 20px',
-                          background: '#fef3c7',
-                          color: '#0369a1',
-                          borderRadius: '999px',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          minWidth: '110px'
-                        }}>
-                          <Shield size={16} />
-                          User
-                        </span>
-                      )}
+                    <td className="px-8 py-6">
+                      <span className={`inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-semibold ${u.is_admin ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'}`}>
+                        <Shield className="w-4 h-4" />
+                        {u.is_admin ? 'Admin' : 'User'}
+                      </span>
                     </td>
-                    <td style={{ padding: '24px 20px', color: '#64748b', fontSize: '14px' }}>
+                    <td className="px-8 py-6 text-gray-600 text-sm">
                       {new Date(u.created_at).toLocaleDateString('en-MY')}
                     </td>
-                    <td style={{ padding: '24px 20px' }}>
-                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    <td className="px-8 py-6">
+                      <div className="flex flex-wrap gap-3 justify-center">
                         {/* Block/Unblock */}
                         <button
                           onClick={() => handleAction(u.id, u.is_blocked ? 'unblock' : 'block')}
                           disabled={actionLoading[u.id]}
-                          style={{
-                            padding: '10px 20px',
-                            background: u.is_blocked ? '#ecfdf5' : '#fef2f2',
-                            color: u.is_blocked ? '#16a34a' : '#dc2626',
-                            border: 'none',
-                            borderRadius: '12px',
-                            fontWeight: '600',
-                            fontSize: '14px',
-                            cursor: actionLoading[u.id] ? 'not-allowed' : 'pointer',
-                            opacity: actionLoading[u.id] ? 0.6 : 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '8px',
-                            minWidth: '120px'
-                          }}
+                          className={`flex items-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm transition ${u.is_blocked ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-red-100 text-red-700 hover:bg-red-200'} disabled:opacity-60`}
                         >
-                          {actionLoading[u.id] ? ('...') : 
-                          (
-                            <>
-                              {u.is_blocked ? (
-                                <>
-                                  <UserCheck size={18} />
-                                  Unblock
-                                </>
-                              ) : (
-                                <>
-                                  <UserX size={18} />
-                                  Block
-                                </>
-                              )}
-                            </>
-                          )}
+                          {actionLoading[u.id] ? '...' : u.is_blocked ? <><UserCheck className="w-4 h-4" /> Unblock</> : <><UserX className="w-4 h-4" /> Block</>}
                         </button>
 
-                        {/* Make/Remove Admin */}
-                        {!u.is_admin ? (
-                          <button
-                            onClick={() => handleAction(u.id, 'make_admin')}
-                            disabled={actionLoading[u.id]}
-                            style={{
-                              padding: '10px 20px',
-                              background: '#dbeafe',
-                              color: '#2563eb',
-                              border: 'none',
-                              borderRadius: '12px',
-                              fontWeight: '600',
-                              fontSize: '14px',
-                              cursor: 'pointer',
-                              opacity: actionLoading[u.id] ? 0.6 : 1,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px'
-                            }}
-                          >
-                            <Shield size={16} />
-                            Make Admin
-                          </button>
-                        ) : (
+                        {/* Admin Toggle */}
+                        {u.is_admin ? (
                           <button
                             onClick={() => handleAction(u.id, 'remove_admin')}
                             disabled={actionLoading[u.id]}
-                            style={{
-                              padding: '10px 20px',
-                              background: '#fef3c7',
-                              color: '#d97706',
-                              border: 'none',
-                              borderRadius: '12px',
-                              fontWeight: '600',
-                              fontSize: '14px',
-                              cursor: 'pointer',
-                              opacity: actionLoading[u.id] ? 0.6 : 1
-                            }}
+                            className="px-5 py-3 bg-amber-100 text-amber-700 rounded-xl font-semibold text-sm hover:bg-amber-200 transition disabled:opacity-60"
                           >
                             Remove Admin
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleAction(u.id, 'make_admin')}
+                            disabled={actionLoading[u.id]}
+                            className="flex items-center gap-2 px-5 py-3 bg-blue-100 text-blue-700 rounded-xl font-semibold text-sm hover:bg-blue-200 transition disabled:opacity-60"
+                          >
+                            <Shield className="w-4 h-4" />
+                            Make Admin
                           </button>
                         )}
 
@@ -345,22 +210,9 @@ export default function Admin() {
                         <button
                           onClick={() => handleAction(u.id, 'reset_password')}
                           disabled={actionLoading[u.id]}
-                          style={{
-                            padding: '10px 20px',
-                            background: '#e0f2fe',
-                            color: '#0369a1',
-                            border: 'none',
-                            borderRadius: '12px',
-                            fontWeight: '600',
-                            fontSize: '14px',
-                            cursor: 'pointer',
-                            opacity: actionLoading[u.id] ? 0.6 : 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                          }}
+                          className="flex items-center gap-2 px-5 py-3 bg-cyan-100 text-cyan-700 rounded-xl font-semibold text-sm hover:bg-cyan-200 transition disabled:opacity-60"
                         >
-                          <KeyRound size={16} />
+                          <KeyRound className="w-4 h-4" />
                           Reset PW
                         </button>
 
@@ -368,22 +220,9 @@ export default function Admin() {
                         <button
                           onClick={() => handleAction(u.id, 'delete')}
                           disabled={actionLoading[u.id]}
-                          style={{
-                            padding: '10px 20px',
-                            background: '#fef2f2',
-                            color: '#dc2626',
-                            border: 'none',
-                            borderRadius: '12px',
-                            fontWeight: '600',
-                            fontSize: '14px',
-                            cursor: 'pointer',
-                            opacity: actionLoading[u.id] ? 0.6 : 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                          }}
+                          className="flex items-center gap-2 px-5 py-3 bg-red-100 text-red-700 rounded-xl font-semibold text-sm hover:bg-red-200 transition disabled:opacity-60"
                         >
-                          {actionLoading[u.id] ? '...' : <Trash2 size={16} />}
+                          {actionLoading[u.id] ? '...' : <Trash2 className="w-4 h-4" />}
                           Delete
                         </button>
                       </div>
@@ -396,45 +235,24 @@ export default function Admin() {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div style={{
-              padding: '24px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: '#f8fafc',
-              borderTop: '1px solid #e2e8f0'
-            }}>
-              <p style={{ color: '#64748b', fontSize: '15px' }}>
+            <div className="flex items-center justify-between px-8 py-6 bg-gray-50 border-t border-gray-200">
+              <p className="text-gray-600">
                 Page {currentPage} of {totalPages}
               </p>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  style={{
-                    padding: '10px 16px',
-                    background: 'white',
-                    border: '2px solid #e2e8f0',
-                    borderRadius: '12px',
-                    cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
-                    opacity: currentPage === 1 ? 0.5 : 1
-                  }}
+                  className="p-3 rounded-xl border-2 border-gray-200 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
-                  <ChevronLeft size={20} />
+                  <ChevronLeft className="w-5 h-5" />
                 </button>
 
                 {[...Array(totalPages)].map((_, i) => (
                   <button
                     key={i}
                     onClick={() => setCurrentPage(i + 1)}
-                    style={{
-                      padding: '10px 18px',
-                      background: currentPage === i + 1 ? '#2563eb' : 'white',
-                      color: currentPage === i + 1 ? 'white' : '#334155',
-                      border: '2px solid #e2e8f0',
-                      borderRadius: '12px',
-                      fontWeight: '600'
-                    }}
+                    className={`px-5 py-3 rounded-xl font-semibold transition ${currentPage === i + 1 ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-200 hover:bg-gray-100'}`}
                   >
                     {i + 1}
                   </button>
@@ -443,16 +261,9 @@ export default function Admin() {
                 <button
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
-                  style={{
-                    padding: '10px 16px',
-                    background: 'white',
-                    border: '2px solid #e2e8f0',
-                    borderRadius: '12px',
-                    cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
-                    opacity: currentPage === totalPages ? 0.5 : 1
-                  }}
+                  className="p-3 rounded-xl border-2 border-gray-200 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
-                  <ChevronRight size={20} />
+                  <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
             </div>
