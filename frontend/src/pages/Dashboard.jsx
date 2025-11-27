@@ -92,8 +92,18 @@ export default function Dashboard() {
       if (selectedDate) {
         const [y, m] = selectedDate.split('-')
         const start = `${y}-${m}-01`
-        const end = new Date(y, m, 0).toISOString().slice(0, 10)
-        query = query.gte('date', start).lte('date', end)
+
+        let nextYear = parseInt(y)
+        let nextMonth = parseInt(m) + 1
+        
+        if (nextMonth > 12) {
+          nextMonth = 1
+          nextYear++
+        }
+
+        const nextMonthStr = String(nextMonth).padStart(2, '0')
+        const end = `${nextYear}-${nextMonthStr}-01`
+        query = query.gte('date', start).lt('date', end)
       }
       if (selectedCategory) {
         const label = ICON_LABELS[selectedCategory]
@@ -433,7 +443,7 @@ export default function Dashboard() {
                   <button
                     key={icon}
                     onClick={() => setNewEntry({...newEntry, icon})}
-                    className={`text-2xl p-3 rounded-xl border-2 transition ${newEntry.icon === icon ? (entryType === 'income' ? 'border-emerald-500 bg-emerald-50' : 'border-red-500 bg-red-50') : 'border-gray-200 hover:bg-gray-50'}`}
+                    className={`text-2xl py-3 rounded-xl border-2 transition ${newEntry.icon === icon ? (entryType === 'income' ? 'border-emerald-500 bg-emerald-50' : 'border-red-500 bg-red-50') : 'border-gray-200 hover:bg-gray-50'}`}
                   >
                     {icon}
                   </button>

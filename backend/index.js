@@ -245,6 +245,7 @@ app.get('/admin/users', async (req, res) => {
   try {
     const user = await getUser(req);
 
+    // 1. Check if requester is admin using adminClient (Service Role)
     const { data: profile } = await adminClient
       .from('profiles')
       .select('is_admin')
@@ -255,20 +256,30 @@ app.get('/admin/users', async (req, res) => {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
+    // 2. Fetch all Auth Users
     const { data: authUsers } = await adminClient.auth.admin.listUsers();
     const userIds = authUsers.users.map(u => u.id);
 
-    const { data: profiles } = await supabase
+    // 3. Fetch Profiles using adminClient (Bypass RLS)
+    const { data: profiles } = await adminClient
       .from('profiles')
       .select('id, full_name, is_blocked, is_admin')
       .in('id', userIds);
 
+    // 4. Merge Data with Fallback
     const enriched = authUsers.users.map(u => {
       const p = profiles?.find(x => x.id === u.id) || {};
+      
+      // LOGIC FIX: Check Profile Table -> Then Check Auth Metadata
+      const nameFromProfile = p.full_name;
+      // 'user_metadata' is where Google/Social logins store names by default
+      const nameFromAuth = u.user_metadata?.full_name || u.user_metadata?.name || u.user_metadata?.display_name;
+
       return {
         id: u.id,
         email: u.email,
-        full_name: p.full_name || null,
+        // If profile name is null, use the one from Auth Metadata
+        full_name: nameFromProfile || nameFromAuth || null, 
         is_blocked: p.is_blocked || false,
         is_admin: p.is_admin || false,
         created_at: u.created_at,

@@ -56,9 +56,6 @@ export default function Admin() {
     try {
       // Keep your original logic here
       const { data: { session } } = await supabase.auth.getSession()
-      // ... fetch calls ...
-      
-      // Simulating state update for UI demo
       setTimeout(() => {
          setUsers(prev => prev.map(u => {
           if (u.id === userId) {
@@ -82,7 +79,7 @@ export default function Admin() {
 
   const filtered = users.filter(u =>
     u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (u.full_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+    (u.full_name || u.display_name || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   const totalPages = Math.ceil(filtered.length / usersPerPage)
@@ -200,10 +197,10 @@ export default function Admin() {
                         <div className="flex items-center gap-3">
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm
                             ${u.is_blocked ? 'bg-slate-400' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
-                            {getInitials(u.full_name, u.email)}
+                            {getInitials((u.full_name || u.display_name ), u.email)}
                           </div>
                           <div>
-                            <div className="font-semibold text-slate-900">{u.full_name || 'Unknown Name'}</div>
+                            <div className="font-semibold text-slate-900">{u.full_name || u.display_name || 'Unknown Name'}</div>
                             <div className="text-xs text-slate-500 font-mono mt-0.5">{u.email}</div>
                           </div>
                         </div>
