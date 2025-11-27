@@ -53,24 +53,45 @@ export default function Admin() {
     if (!confirm(msgs[action])) return
 
     setActionLoading(p => ({ ...p, [userId]: true }))
+
     try {
-      // Keep your original logic here
       const { data: { session } } = await supabase.auth.getSession()
-      setTimeout(() => {
-         setUsers(prev => prev.map(u => {
-          if (u.id === userId) {
-            if (action === 'block' || action === 'unblock') return { ...u, is_blocked: action === 'block' }
-            if (action === 'make_admin' || action === 'remove_admin') return { ...u, is_admin: action === 'make_admin' }
-          }
-          return u
-        }))
-        if (action === 'delete') setUsers(prev => prev.filter(u => u.id !== userId))
-        setActionLoading(p => ({ ...p, [userId]: false }))
-        alert(`Action '${action}' completed.`)
-      }, 500)
+      
+      // --- THIS WAS MISSING IN YOUR CODE ---
+      const res = await fetch(`${API_URL}/admin/action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ user_id: userId, action })
+      })
+
+      if (!res.ok) {
+        const errorData = await res.json()
+        throw new Error(errorData.error || 'Action failed')
+      }
+      // -------------------------------------
+
+      // Update UI state only after successful server response
+      setUsers(prev => prev.map(u => {
+        if (u.id === userId) {
+          if (action === 'block' || action === 'unblock') return { ...u, is_blocked: action === 'block' }
+          if (action === 'make_admin' || action === 'remove_admin') return { ...u, is_admin: action === 'make_admin' }
+        }
+        return u
+      }))
+
+      if (action === 'delete') {
+        setUsers(prev => prev.filter(u => u.id !== userId))
+      }
+
+      alert(`Action '${action}' successful`)
 
     } catch (err) {
+      console.error(err)
       alert('Error: ' + err.message)
+    } finally {
       setActionLoading(p => ({ ...p, [userId]: false }))
     }
   }

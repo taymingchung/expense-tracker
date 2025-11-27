@@ -295,9 +295,10 @@ app.get('/admin/users', async (req, res) => {
 
 app.post('/admin/action', async (req, res) => {
   try {
-    const user = await getUser(req);
+    const user = await getUser(req); // Your existing auth check
     const { user_id, action } = req.body;
 
+    // 1. Check if requester is Admin
     const { data: adminProfile } = await adminClient
       .from('profiles')
       .select('is_admin')
@@ -305,13 +306,22 @@ app.post('/admin/action', async (req, res) => {
       .single();
 
     if (!adminProfile?.is_admin) {
-      return res.status(403).json({ error: 'Admin only' });
+      return res.status(403).json({ error: 'Admin access required' });
     }
 
+    // 2. Handle Actions
     switch (action) {
       case 'block':
+        // Update Profile Table
+        await adminClient.from('profiles').update({ is_blocked: true }).eq('id', user_id);
+        // ACTUAL BAN in Supabase Auth (prevents login)
+        await adminClient.auth.admin.updateUserById(user_id, { ban_duration: '876000h' }); // 100 years
+        break;
+
       case 'unblock':
-        await adminClient.from('profiles').update({ is_blocked: action === 'block' }).eq('id', user_id);
+        await adminClient.from('profiles').update({ is_blocked: false }).eq('id', user_id);
+        // Remove Ban
+        await adminClient.auth.admin.updateUserById(user_id, { ban_duration: 'none' });
         break;
 
       case 'make_admin':
@@ -319,12 +329,33 @@ app.post('/admin/action', async (req, res) => {
         await adminClient.from('profiles').update({ is_admin: action === 'make_admin' }).eq('id', user_id);
         break;
 
+      case 'reset_password':
+        // Get the user's email first
+        const { data: targetUser, error: uErr } = await adminClient.auth.admin.getUserById(user_id);
+        if (uErr || !targetUser) throw new Error("User not found");
+        
+        // Send Reset Email
+        await adminClient.auth.resetPasswordForEmail(targetUser.user.email);
+        break;
+
       case 'delete':
-        await adminClient.auth.admin.deleteUser(user_id);
-        await adminClient.from('transactions').delete().eq('user_id', user_id);
+        // 1. Delete Transactions (Deepest level data)
+        const { error: transError } = await adminClient
+          .from('transactions')
+          .delete()
+          .or(`user_id.eq.${user_id},wallet_id.in.(select id from wallets where owner_id = '${user_id}')`);
+        if (transError) console.log("Trans Error", transError);
+        // 2. Delete Wallet Memberships
         await adminClient.from('wallet_members').delete().eq('user_id', user_id);
+        // 3. Delete Wallets owned by user
+        // (Note: We must delete transactions inside these wallets first, which we did in step 1)
         await adminClient.from('wallets').delete().eq('owner_id', user_id);
+        // 4. Delete Profile
         await adminClient.from('profiles').delete().eq('id', user_id);
+        // 5. FINALLY delete the Authentication User
+        const { error: authError } = await adminClient.auth.admin.deleteUser(user_id);
+        
+        if (authError) throw new Error(authError.message);
         break;
 
       default:
@@ -333,7 +364,7 @@ app.post('/admin/action', async (req, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error(e);
+    console.error("Admin Action Error:", e);
     res.status(500).json({ error: e.message });
   }
 });
